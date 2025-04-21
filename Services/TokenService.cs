@@ -43,7 +43,7 @@ namespace WebCodeWork.Services
                 // Add other claims as needed (e.g., roles)
             };
 
-            var expiration = DateTime.UtcNow.AddHours(1); // Example: Token valid for 1 hour
+            var expiration = DateTime.UtcNow.AddHours(5);
 
             var token = new JwtSecurityToken(
                 issuer: issuer,

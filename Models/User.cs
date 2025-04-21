@@ -19,5 +19,7 @@ namespace WebCodeWork.Models
         public string PasswordHash { get; set; } = string.Empty;
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        public virtual ICollection<ClassroomMember> ClassroomMemberships { get; set; } = new List<ClassroomMember>();
     }
 }
