@@ -350,5 +350,41 @@ namespace WebCodeWork.Controllers
                  return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error adding student to the classroom." });
              }
         }
+
+        // --- GET User's Classrooms ---
+        [HttpGet("my")] // Route: GET /api/classrooms/my
+        [ProducesResponseType(typeof(IEnumerable<UserClassroomDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> GetMyClassrooms()
+        {
+            int currentUserId;
+            try
+            {
+                currentUserId = GetCurrentUserId();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { message = ex.Message });
+            }
+
+            // Query ClassroomMemberships for the current user,
+            // include the Classroom details, and project to the DTO.
+            var userClassrooms = await _context.ClassroomMembers
+                .Where(cm => cm.UserId == currentUserId)
+                .Include(cm => cm.Classroom) // Include the related Classroom data
+                .OrderBy(cm => cm.Classroom.Name) // Optional: Order by classroom name
+                .Select(cm => new UserClassroomDto // Project the result into our DTO
+                {
+                    ClassroomId = cm.ClassroomId,
+                    Name = cm.Classroom.Name,
+                    Description = cm.Classroom.Description,
+                    UserRole = cm.Role, // Get the user's role from the ClassroomMember record
+                    JoinedAt = cm.JoinedAt
+                })
+                .ToListAsync(); // Execute the query
+
+            // userClassrooms will be an empty list if the user is not in any classrooms.
+            return Ok(userClassrooms);
+        }
     }
 }
