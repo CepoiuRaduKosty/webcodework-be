@@ -472,37 +472,107 @@ public class SubmissionsController : ControllerBase
 
     // --- Teacher/Owner Endpoints ---
 
-    // GET /api/assignments/{assignmentId}/submissions - List All Submissions for Assignment
+    // GET /api/assignments/{assignmentId}/submissions - List All Student Submissions for Teacher Overview
     [HttpGet("assignments/{assignmentId}/submissions")]
-    [ProducesResponseType(typeof(IEnumerable<SubmissionSummaryDto>), StatusCodes.Status200OK)]
-    // ... other response types ...
+    [ProducesResponseType(typeof(IEnumerable<TeacherSubmissionViewDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetSubmissionsForAssignment(int assignmentId)
     {
-        int currentUserId = GetCurrentUserId();
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
 
-        var assignment = await _context.Assignments.FindAsync(assignmentId);
-        if (assignment == null) return NotFound();
+        var assignment = await _context.Assignments
+            .AsNoTracking() // Read-only query
+            .FirstOrDefaultAsync(a => a.Id == assignmentId);
+
+        if (assignment == null)
+        {
+            return NotFound(new { message = "Assignment not found." });
+        }
 
         // Auth Check: Must be Owner/Teacher
         var userRole = await GetUserRoleInClassroom(currentUserId, assignment.ClassroomId);
-        if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher) return Forbid();
+        if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
+        {
+             _logger.LogWarning("User {UserId} forbidden from viewing submissions for assignment {AssignmentId}.", currentUserId, assignmentId);
+            return Forbid();
+        }
 
-        var submissions = await _context.AssignmentSubmissions
-            .Where(s => s.AssignmentId == assignmentId)
-            .Include(s => s.Student) // Include student for username
-            .Select(s => new SubmissionSummaryDto // Project to summary DTO
-            {
-                Id = s.Id,
-                StudentId = s.StudentId,
-                StudentUsername = s.Student.Username,
-                SubmittedAt = s.SubmittedAt,
-                IsLate = s.IsLate,
-                Grade = s.Grade,
-                HasFiles = s.SubmittedFiles.Any() // Check if files exist efficiently
-            })
+        // 1. Get all students enrolled in the classroom
+        var studentsInClass = await _context.ClassroomMembers
+            .Where(cm => cm.ClassroomId == assignment.ClassroomId && cm.Role == ClassroomRole.Student)
+            .Include(cm => cm.User) // Include User to get username
+            .Select(cm => new { cm.UserId, cm.User.Username })
             .ToListAsync();
 
-        return Ok(submissions);
+        // 2. Get all existing submissions for this assignment, optimized for lookup
+        var submissions = await _context.AssignmentSubmissions
+            .Where(s => s.AssignmentId == assignmentId)
+            .Include(s => s.SubmittedFiles) // Needed to check HasFiles
+            .Select(s => new // Select only needed fields
+            {
+                s.Id,
+                s.StudentId,
+                s.SubmittedAt,
+                s.IsLate,
+                s.Grade,
+                HasFiles = s.SubmittedFiles.Any()
+            })
+            .ToDictionaryAsync(s => s.StudentId); // Key by StudentId
+
+        // 3. Create the result list, iterating through students
+        var result = new List<TeacherSubmissionViewDto>();
+
+        foreach (var student in studentsInClass)
+        {
+            var studentView = new TeacherSubmissionViewDto
+            {
+                StudentId = student.UserId,
+                StudentUsername = student.Username ?? "N/A"
+                // Default status is "Not Submitted"
+            };
+
+            // Check if this student has a submission in our dictionary
+            if (submissions.TryGetValue(student.UserId, out var submissionInfo))
+            {
+                // Populate submission details
+                studentView.SubmissionId = submissionInfo.Id;
+                studentView.SubmittedAt = submissionInfo.SubmittedAt;
+                studentView.IsLate = submissionInfo.IsLate;
+                studentView.Grade = submissionInfo.Grade;
+                studentView.HasFiles = submissionInfo.HasFiles;
+
+                // Determine Status string
+                if (submissionInfo.Grade.HasValue)
+                {
+                    studentView.Status = "Graded";
+                }
+                else if (submissionInfo.SubmittedAt.HasValue)
+                {
+                    studentView.Status = submissionInfo.IsLate ? "Submitted (Late)" : "Submitted";
+                }
+                else
+                {
+                    // Submission record exists, but not submitted yet (e.g., files uploaded)
+                    studentView.Status = "In Progress";
+                }
+            }
+            else
+            {
+                // No submission found for this student
+                studentView.Status = "Not Submitted";
+                // Other nullable fields remain null by default
+            }
+            result.Add(studentView);
+            Console.WriteLine("DEBUGG student " + studentView.Status);
+        }
+
+        // Optional: Sort the result list (e.g., by student name)
+        result = result.OrderBy(s => s.StudentUsername).ToList();
+
+        return Ok(result);
     }
 
     // GET /api/submissions/{submissionId} - Get Specific Submission Details (Teacher/Student View)
