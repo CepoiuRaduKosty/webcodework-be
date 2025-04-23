@@ -386,5 +386,73 @@ namespace WebCodeWork.Controllers
             // userClassrooms will be an empty list if the user is not in any classrooms.
             return Ok(userClassrooms);
         }
+
+        // --- GET Classroom Details (including members) ---
+        [HttpGet("{classroomId}/details")]
+        [ProducesResponseType(typeof(ClassroomDetailsDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetClassroomDetails(int classroomId)
+        {
+            int currentUserId;
+            try
+            {
+                currentUserId = GetCurrentUserId();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // User not authenticated
+                return Unauthorized(new { message = ex.Message });
+            }
+
+            // Fetch the classroom and include member data with associated user info in one query
+            var classroom = await _context.Classrooms
+                .Include(c => c.Members)         // Include the ClassroomMembers collection
+                    .ThenInclude(cm => cm.User) // For each member, include their User details
+                .FirstOrDefaultAsync(c => c.Id == classroomId);
+
+            // 1. Check if Classroom Exists
+            if (classroom == null)
+            {
+                return NotFound(new { message = "Classroom not found." });
+            }
+
+            // 2. Authorization Check: Is the current user a member of this classroom?
+            var currentUserMembership = classroom.Members
+                .FirstOrDefault(cm => cm.UserId == currentUserId);
+
+            if (currentUserMembership == null)
+            {
+                // User is authenticated but not a member of this specific classroom
+                _logger.LogWarning("User {UserId} attempted to access details for classroom {ClassroomId} without membership.", currentUserId, classroomId);
+                return Forbid(); // HTTP 403 Forbidden
+            }
+
+            // 3. Map the data to the DTO
+            var membersDto = classroom.Members
+                .OrderBy(cm => cm.Role) // Optional: Order members (e.g., Owner, Teacher, Student)
+                .ThenBy(cm => cm.User.Username)
+                .Select(cm => new ClassroomMemberDto
+                {
+                    UserId = cm.UserId,
+                    Username = cm.User.Username, // Get username from included User entity
+                    ClassroomId = cm.ClassroomId,
+                    Role = cm.Role,
+                    JoinedAt = cm.JoinedAt
+                })
+                .ToList(); // Convert to List
+
+            var detailsDto = new ClassroomDetailsDto
+            {
+                Id = classroom.Id,
+                Name = classroom.Name,
+                Description = classroom.Description,
+                CurrentUserRole = currentUserMembership.Role, // Get the role from the check above
+                Members = membersDto
+            };
+
+            return Ok(detailsDto);
+        }
     }
 }
