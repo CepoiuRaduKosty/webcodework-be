@@ -37,7 +37,7 @@ namespace WebCodeWork.Dtos
 }
 
 // Dtos/SubmissionDtos.cs
-namespace YourProjectName.Dtos
+namespace WebCodeWork.Dtos
 {
     public class SubmittedFileDto
     {

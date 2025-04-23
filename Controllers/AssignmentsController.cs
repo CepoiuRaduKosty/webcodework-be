@@ -7,7 +7,7 @@ using WebCodeWork.Data;
 using WebCodeWork.Dtos;
 using WebCodeWork.Enums;
 using WebCodeWork.Models;
-// Add other necessary using statements
+using WebCodeWork.Services;
 
 [Route("api/")] // Base route adjusted
 [ApiController]
@@ -16,12 +16,13 @@ public class AssignmentsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<AssignmentsController> _logger;
-    // Inject file service if needed: private readonly IFileStorageService _fileService;
+    private readonly IFileStorageService _fileService;
 
-    public AssignmentsController(ApplicationDbContext context, ILogger<AssignmentsController> logger)
+    public AssignmentsController(ApplicationDbContext context, ILogger<AssignmentsController> logger, IFileStorageService fileService)
     {
         _context = context;
         _logger = logger;
+        _fileService = fileService;
     }
 
     // --- Helper Methods (similar to ClassroomsController, adapt as needed) ---
@@ -99,7 +100,16 @@ public class AssignmentsController : ControllerBase
 
          // Map to response DTO (fetch creator username if needed)
          var createdBy = await _context.Users.FindAsync(currentUserId);
-         var responseDto = new AssignmentDetailsDto { /* ... map fields ... */ CreatedByUsername = createdBy?.Username ?? "N/A" };
+         var responseDto = new AssignmentDetailsDto { 
+            CreatedByUsername = createdBy?.Username ?? "N/A",
+            CreatedById = currentUserId,
+            ClassroomId = classroomId,
+            Id = assignment.Id,
+            Title = assignment.Title,
+            CreatedAt = assignment.CreatedAt,
+            DueDate = assignment.DueDate,
+            MaxPoints = assignment.MaxPoints
+        };
 
          return CreatedAtAction(nameof(GetAssignmentDetails), new { assignmentId = assignment.Id }, responseDto);
     }
@@ -241,29 +251,110 @@ public class AssignmentsController : ControllerBase
     // DELETE /api/assignments/{assignmentId} - Delete Assignment
     [HttpDelete("assignments/{assignmentId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)] // Added potential 400 for file deletion failure if desired
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteAssignment(int assignmentId)
     {
-        int currentUserId = GetCurrentUserId();
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); } // Simplified error handling
 
-        var assignment = await _context.Assignments.FindAsync(assignmentId);
-        if (assignment == null) return NotFound();
+        // Use Include to potentially help track related entities if needed,
+        // although we query SubmittedFiles separately later.
+        // FindAsync doesn't support Include, so we use FirstOrDefaultAsync.
+        var assignment = await _context.Assignments
+                                      .FirstOrDefaultAsync(a => a.Id == assignmentId);
+
+        if (assignment == null)
+        {
+            return NotFound(new { message = $"Assignment with ID {assignmentId} not found." });
+        }
 
         // Auth Check: User must be Owner/Teacher in the classroom or original creator
         if (!await CanUserManageAssignment(currentUserId, assignmentId))
         {
+             _logger.LogWarning("User {UserId} forbidden from deleting assignment {AssignmentId}.", currentUserId, assignmentId);
              return Forbid();
         }
 
-        // TODO: Handle file deletion from storage if files exist in submissions
-        // This requires iterating through submissions and files, calling file service
+        // Handle file deletion from storage before deleting DB records
 
-        _context.Assignments.Remove(assignment); // Cascade delete should handle submissions/files in DB
-        await _context.SaveChangesAsync();
+        _logger.LogInformation("Starting physical file cleanup for assignment {AssignmentId} deletion.", assignmentId);
 
-        return NoContent();
+        // 1. Query for all files associated with this assignment's submissions
+        var filesToDelete = await _context.SubmittedFiles
+            .Where(f => f.AssignmentSubmission.AssignmentId == assignmentId) // Filter via navigation property
+            .Select(f => new { f.FilePath, f.StoredFileName }) // Select only needed info
+            .ToListAsync(); // Get the list
+
+        if (filesToDelete.Any())
+        {
+            _logger.LogInformation("Found {FileCount} files to delete for assignment {AssignmentId}.", filesToDelete.Count, assignmentId);
+            bool allFilesDeletedSuccessfully = true;
+
+            // 2. Loop and delete each file using the file service
+            foreach (var fileInfo in filesToDelete)
+            {
+                try
+                {
+                    // Assuming FilePath stores the relative directory (e.g., "submissions/123")
+                    // And StoredFileName stores the unique blob name (e.g., "guid.pdf")
+                    bool deleted = await _fileService.DeleteSubmissionFileAsync(fileInfo.FilePath, fileInfo.StoredFileName);
+                    if (!deleted)
+                    {
+                        // Log if the service indicated the file didn't exist or failed, but continue
+                         _logger.LogWarning("Failed to delete or file not found in storage: Path='{FilePath}', Name='{StoredFileName}' during assignment {AssignmentId} deletion.",
+                            fileInfo.FilePath, fileInfo.StoredFileName, assignmentId);
+                        // Optionally set allFilesDeletedSuccessfully = false here if you want to return a different status later
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Log unexpected errors during file deletion but continue cleanup
+                    _logger.LogError(ex, "Error deleting file Path='{FilePath}', Name='{StoredFileName}' during assignment {AssignmentId} deletion.",
+                       fileInfo.FilePath, fileInfo.StoredFileName, assignmentId);
+                    allFilesDeletedSuccessfully = false; // Mark that at least one error occurred
+                }
+            }
+
+            if (!allFilesDeletedSuccessfully)
+            {
+                 _logger.LogWarning("One or more files failed to delete during cleanup for assignment {AssignmentId}. Database record will still be removed.", assignmentId);
+                // Optionally, you could return a specific status code like 400 Bad Request or 500 Internal Server Error here
+                // if you want the API call to reflect the partial failure. Example:
+                // return BadRequest(new { message = "Assignment deleted, but failed to clean up one or more associated files." });
+                // However, proceeding to delete the DB record and returning 204 is also common for cleanup tasks.
+            }
+            else
+            {
+                 _logger.LogInformation("Successfully processed physical file cleanup for assignment {AssignmentId}.", assignmentId);
+            }
+        }
+        else
+        {
+            _logger.LogInformation("No associated files found to delete for assignment {AssignmentId}.", assignmentId);
+        }
+
+
+        // 3. Remove the Assignment record from the database context
+        // Cascade delete settings in DbContext should handle removing related
+        // AssignmentSubmissions and SubmittedFiles records from the database.
+        _context.Assignments.Remove(assignment);
+
+        try
+        {
+            // 4. Save changes to the database
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Successfully deleted assignment {AssignmentId} and associated DB records.", assignmentId);
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogError(ex, "Database error while deleting assignment {AssignmentId}.", assignmentId);
+            // If file deletion succeeded but DB delete failed, you might be in an inconsistent state.
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to delete assignment from database after file cleanup." });
+        }
+
+        // 5. Return success
+        return NoContent(); // Standard HTTP 204 No Content for successful DELETE
     }
 }

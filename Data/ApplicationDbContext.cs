@@ -17,7 +17,7 @@ namespace WebCodeWork.Data
 
         public DbSet<Assignment> Assignments { get; set; }
         public DbSet<AssignmentSubmission> AssignmentSubmissions { get; set; }
-        public DbSet<SubmittedFile> submittedFiles { get; set; }
+        public DbSet<SubmittedFile> SubmittedFiles { get; set; }
 
 
 
