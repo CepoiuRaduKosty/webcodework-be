@@ -15,6 +15,11 @@ namespace WebCodeWork.Data
         public DbSet<Classroom> Classrooms { get; set; } // Add DbSet for Classroom
         public DbSet<ClassroomMember> ClassroomMembers { get; set; } // Add DbSet for the join entity
 
+        public DbSet<Assignment> Assignments { get; set; }
+        public DbSet<AssignmentSubmission> AssignmentSubmissions { get; set; }
+        public DbSet<SubmittedFile> submittedFiles { get; set; }
+
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -48,6 +53,50 @@ namespace WebCodeWork.Data
             modelBuilder.Entity<ClassroomMember>()
                 .Property(cm => cm.Role)
                 .HasConversion<string>();
+
+
+            // AssignmentSubmission unique constraint
+            modelBuilder.Entity<AssignmentSubmission>()
+                .HasIndex(s => new { s.StudentId, s.AssignmentId })
+                .IsUnique();
+
+            // Configure relationships and cascade deletes as needed
+            modelBuilder.Entity<Assignment>()
+                .HasOne(a => a.Classroom)
+                .WithMany() // Assuming Classroom doesn't need direct nav prop back to all Assignments
+                .HasForeignKey(a => a.ClassroomId)
+                .OnDelete(DeleteBehavior.Cascade); // Deleting classroom deletes assignments
+
+            modelBuilder.Entity<Assignment>()
+                .HasOne(a => a.CreatedBy)
+                .WithMany() // Assuming User doesn't need direct nav prop back to created assignments
+                .HasForeignKey(a => a.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict); // Prevent deleting user if they created assignments? Or SetNull?
+
+            modelBuilder.Entity<AssignmentSubmission>()
+               .HasOne(s => s.Assignment)
+               .WithMany(a => a.Submissions)
+               .HasForeignKey(s => s.AssignmentId)
+               .OnDelete(DeleteBehavior.Cascade); // Deleting assignment deletes submissions
+
+            modelBuilder.Entity<AssignmentSubmission>()
+                .HasOne(s => s.Student)
+                .WithMany() // Assuming User doesn't need direct nav prop to all submissions
+                .HasForeignKey(s => s.StudentId)
+                .OnDelete(DeleteBehavior.Cascade); // Deleting student deletes their submissions
+
+            modelBuilder.Entity<AssignmentSubmission>()
+               .HasOne(s => s.GradedBy)
+               .WithMany()
+               .HasForeignKey(s => s.GradedById)
+               .OnDelete(DeleteBehavior.SetNull); // If grader is deleted, keep submission but nullify grader
+
+            modelBuilder.Entity<SubmittedFile>()
+                .HasOne(f => f.AssignmentSubmission)
+                .WithMany(s => s.SubmittedFiles)
+                .HasForeignKey(f => f.AssignmentSubmissionId)
+                .OnDelete(DeleteBehavior.Cascade); // Deleting submission deletes its files
+
 
         }
     }
