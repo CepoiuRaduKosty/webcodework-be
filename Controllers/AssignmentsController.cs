@@ -117,46 +117,94 @@ public class AssignmentsController : ControllerBase
     // GET /api/classrooms/{classroomId}/assignments - List Assignments for Classroom
     [HttpGet("classrooms/{classroomId}/assignments")]
     [ProducesResponseType(typeof(IEnumerable<AssignmentBasicDto>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)] // Added in case classroom doesn't exist
     public async Task<IActionResult> GetAssignmentsForClassroom(int classroomId)
     {
-        int currentUserId = GetCurrentUserId();
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
 
         // Auth Check: User must be a member of the classroom
         var userRole = await GetUserRoleInClassroom(currentUserId, classroomId);
-        if (userRole == null) return Forbid();
+        if (userRole == null)
+        {
+             // Check if classroom exists at all before returning Forbid
+             var classroomExists = await _context.Classrooms.AnyAsync(c => c.Id == classroomId);
+             if (!classroomExists)
+             {
+                 return NotFound(new { message = $"Classroom with ID {classroomId} not found." });
+             }
+             _logger.LogWarning("User {UserId} forbidden from accessing assignments for classroom {ClassroomId}.", currentUserId, classroomId);
+             return Forbid();
+        }
 
+        // --- Select and Map Assignment data ---
         var assignments = await _context.Assignments
             .Where(a => a.ClassroomId == classroomId)
             .OrderByDescending(a => a.CreatedAt)
-            .Select(a => new AssignmentBasicDto { /* ... map fields ... */ })
-            .ToListAsync();
+            .Select(a => new AssignmentBasicDto
+            {
+                // --- Mapping Start ---
+                Id = a.Id,
+                Title = a.Title,
+                CreatedAt = a.CreatedAt,
+                DueDate = a.DueDate,
+                MaxPoints = a.MaxPoints
+                // SubmissionStatus is intentionally NOT mapped here yet.
+                // It will be populated below only if the user is a student.
+                // --- Mapping End ---
+            })
+            .ToListAsync(); // Execute the query to get the initial list
 
-        // Optional: Enhance DTO with submission status for the current user if they are a student
+        // --- Enhance DTO with submission status for students ---
          if (userRole == ClassroomRole.Student)
          {
              var assignmentIds = assignments.Select(a => a.Id).ToList();
-             var submissions = await _context.AssignmentSubmissions
-                 .Where(s => s.StudentId == currentUserId && assignmentIds.Contains(s.AssignmentId))
-                 .ToDictionaryAsync(s => s.AssignmentId); // Efficient lookup
-
-             foreach (var dto in assignments)
+             // Avoid fetching if there are no assignments
+             if (assignmentIds.Any())
              {
-                 if (submissions.TryGetValue(dto.Id, out var submission))
+                 // Fetch relevant submissions for this student efficiently
+                 var submissions = await _context.AssignmentSubmissions
+                     .Where(s => s.StudentId == currentUserId && assignmentIds.Contains(s.AssignmentId))
+                     .Select(s => new // Select only needed fields for status calculation
+                     {
+                         s.AssignmentId,
+                         s.SubmittedAt,
+                         s.Grade,
+                         s.IsLate
+                     })
+                     .ToDictionaryAsync(s => s.AssignmentId); // Efficient lookup by AssignmentId
+
+                 // Populate the SubmissionStatus in the DTO list
+                 foreach (var dto in assignments)
                  {
-                     if (submission.Grade.HasValue) dto.SubmissionStatus = "Graded";
-                     else if (submission.SubmittedAt.HasValue) dto.SubmissionStatus = submission.IsLate ? "Submitted (Late)" : "Submitted";
-                     else dto.SubmissionStatus = "In Progress"; // Student started but didn't submit
-                 }
-                 else
-                 {
-                     dto.SubmissionStatus = "Not Submitted";
+                     if (submissions.TryGetValue(dto.Id, out var submission))
+                     {
+                         // Submission record exists
+                         if (submission.Grade.HasValue)
+                         {
+                             dto.SubmissionStatus = "Graded";
+                         }
+                         else if (submission.SubmittedAt.HasValue)
+                         {
+                             dto.SubmissionStatus = submission.IsLate ? "Submitted (Late)" : "Submitted";
+                         }
+                         else
+                         {
+                             // Submission record exists but SubmittedAt is null - implies student started (e.g., uploaded file) but didn't click "Turn In"
+                             dto.SubmissionStatus = "In Progress";
+                         }
+                     }
+                     else
+                     {
+                         // No submission record found for this assignment and student
+                         dto.SubmissionStatus = "Not Submitted";
+                     }
                  }
              }
          }
-
+         // Teachers/Owners will not have the SubmissionStatus field populated (it remains null)
 
         return Ok(assignments);
     }
