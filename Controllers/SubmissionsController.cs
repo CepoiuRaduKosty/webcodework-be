@@ -3,11 +3,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text;
 using WebCodeWork.Data;
 using WebCodeWork.Dtos;
 using WebCodeWork.Enums;
 using WebCodeWork.Models;
 using WebCodeWork.Services;
+using YourProjectName.Dtos;
 
 [Route("api/")]
 [ApiController]
@@ -168,7 +170,7 @@ public class SubmissionsController : ControllerBase
 
     // Controllers/SubmissionsController.cs
 
-// ... (using statements, constructor, other methods) ...
+    // ... (using statements, constructor, other methods) ...
 
     // POST /api/assignments/{assignmentId}/submissions/my/files - Upload File
     [HttpPost("assignments/{assignmentId}/submissions/my/files")]
@@ -239,14 +241,14 @@ public class SubmissionsController : ControllerBase
 
             _context.SubmittedFiles.Add(submittedFile);
             await _context.SaveChangesAsync(); // Save the file record to get its ID
-             _logger.LogInformation("Saved SubmittedFile record {FileId} for submission {SubmissionId}.", submittedFile.Id, submission.Id);
+            _logger.LogInformation("Saved SubmittedFile record {FileId} for submission {SubmissionId}.", submittedFile.Id, submission.Id);
         }
         catch (DbUpdateException dbEx)
         {
-             _logger.LogError(dbEx, "Database error saving SubmittedFile record for submission {SubmissionId}.", submission.Id);
-             // Attempt to clean up the file that was just saved to storage
-             await _fileService.DeleteSubmissionFileAsync(relativePath, storedFileName);
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving file information." });
+            _logger.LogError(dbEx, "Database error saving SubmittedFile record for submission {SubmissionId}.", submission.Id);
+            // Attempt to clean up the file that was just saved to storage
+            await _fileService.DeleteSubmissionFileAsync(relativePath, storedFileName);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving file information." });
         }
 
 
@@ -290,7 +292,7 @@ public class SubmissionsController : ControllerBase
 
         if (fileRecord == null)
         {
-             _logger.LogWarning("File record not found for ID {FileId} on submission {SubmissionId}.", fileId, submissionId);
+            _logger.LogWarning("File record not found for ID {FileId} on submission {SubmissionId}.", fileId, submissionId);
             return NotFound(new { message = "File record not found." });
         }
 
@@ -319,16 +321,16 @@ public class SubmissionsController : ControllerBase
             if (!fileDeleted)
             {
                 // Log warning but proceed to try and delete DB record if file wasn't found in storage
-                 _logger.LogWarning("Physical file not found or failed to delete from storage: Path='{FilePath}', Name='{StoredFileName}' for file record {FileId}.",
-                            fileRecord.FilePath, fileRecord.StoredFileName, fileId);
+                _logger.LogWarning("Physical file not found or failed to delete from storage: Path='{FilePath}', Name='{StoredFileName}' for file record {FileId}.",
+                           fileRecord.FilePath, fileRecord.StoredFileName, fileId);
             }
         }
         catch (Exception ex)
         {
-             _logger.LogError(ex, "Error deleting physical file from storage: Path='{FilePath}', Name='{StoredFileName}' for file record {FileId}.",
-                       fileRecord.FilePath, fileRecord.StoredFileName, fileId);
-             // Consider returning 500 Internal Server Error here if physical file deletion failure should stop the process
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to delete file from storage." });
+            _logger.LogError(ex, "Error deleting physical file from storage: Path='{FilePath}', Name='{StoredFileName}' for file record {FileId}.",
+                      fileRecord.FilePath, fileRecord.StoredFileName, fileId);
+            // Consider returning 500 Internal Server Error here if physical file deletion failure should stop the process
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to delete file from storage." });
         }
 
 
@@ -337,15 +339,15 @@ public class SubmissionsController : ControllerBase
 
         try
         {
-             await _context.SaveChangesAsync();
-             _logger.LogInformation("Successfully deleted SubmittedFile record {FileId} for submission {SubmissionId}.", fileId, submissionId);
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Successfully deleted SubmittedFile record {FileId} for submission {SubmissionId}.", fileId, submissionId);
         }
-         catch (DbUpdateException dbEx)
+        catch (DbUpdateException dbEx)
         {
             _logger.LogError(dbEx, "Database error deleting SubmittedFile record {FileId}.", fileId);
-             // If physical file was deleted but DB fails, we have an orphan file reference potentially.
-             // This is harder to recover from automatically.
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error removing file record." });
+            // If physical file was deleted but DB fails, we have an orphan file reference potentially.
+            // This is harder to recover from automatically.
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error removing file record." });
         }
 
         return NoContent(); // Success
@@ -370,7 +372,7 @@ public class SubmissionsController : ControllerBase
         {
             // Check if assignment exists to return NotFound, otherwise assume Forbidden
             var assignmentExists = await _context.Assignments.AnyAsync(a => a.Id == assignmentId);
-             if (!assignmentExists) return NotFound(new { message = "Assignment not found." });
+            if (!assignmentExists) return NotFound(new { message = "Assignment not found." });
             _logger.LogWarning("User {UserId} forbidden from submitting assignment {AssignmentId} (not student or other issue).", currentUserId, assignmentId);
             return Forbid();
         }
@@ -411,19 +413,19 @@ public class SubmissionsController : ControllerBase
         // Mark the entity as modified if it wasn't just added
         if (_context.Entry(submission).State != EntityState.Added)
         {
-             _context.Entry(submission).State = EntityState.Modified;
+            _context.Entry(submission).State = EntityState.Modified;
         }
         // Save changes (handles both new submission creation and modification)
         try
         {
             await _context.SaveChangesAsync();
-             _logger.LogInformation("User {UserId} successfully submitted assignment {AssignmentId} for submission {SubmissionId}. IsLate: {IsLate}",
-                currentUserId, assignmentId, submission.Id, submission.IsLate);
+            _logger.LogInformation("User {UserId} successfully submitted assignment {AssignmentId} for submission {SubmissionId}. IsLate: {IsLate}",
+               currentUserId, assignmentId, submission.Id, submission.IsLate);
         }
         catch (DbUpdateException dbEx)
         {
-             _logger.LogError(dbEx, "Database error while submitting assignment {AssignmentId} for user {UserId}.", assignmentId, currentUserId);
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving submission." });
+            _logger.LogError(dbEx, "Database error while submitting assignment {AssignmentId} for user {UserId}.", assignmentId, currentUserId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving submission." });
         }
 
 
@@ -435,10 +437,10 @@ public class SubmissionsController : ControllerBase
             .Include(s => s.GradedBy)     // Include grader info (likely null here)
             .FirstOrDefaultAsync(s => s.Id == submission.Id); // Fetch by the now-guaranteed ID
 
-        if(updatedSubmission == null) // Should not happen, but defensive check
+        if (updatedSubmission == null) // Should not happen, but defensive check
         {
-             _logger.LogError("Failed to reload submission {SubmissionId} after saving.", submission.Id);
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to retrieve submission details after saving." });
+            _logger.LogError("Failed to reload submission {SubmissionId} after saving.", submission.Id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to retrieve submission details after saving." });
         }
 
         // --- Map to DTO Start (from previous example) ---
@@ -496,7 +498,7 @@ public class SubmissionsController : ControllerBase
         var userRole = await GetUserRoleInClassroom(currentUserId, assignment.ClassroomId);
         if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
         {
-             _logger.LogWarning("User {UserId} forbidden from viewing submissions for assignment {AssignmentId}.", currentUserId, assignmentId);
+            _logger.LogWarning("User {UserId} forbidden from viewing submissions for assignment {AssignmentId}.", currentUserId, assignmentId);
             return Forbid();
         }
 
@@ -595,7 +597,7 @@ public class SubmissionsController : ControllerBase
 
         if (submission == null)
         {
-             _logger.LogWarning("Submission details request failed: Submission {SubmissionId} not found.", submissionId);
+            _logger.LogWarning("Submission details request failed: Submission {SubmissionId} not found.", submissionId);
             return NotFound(new { message = "Submission not found." });
         }
 
@@ -606,7 +608,7 @@ public class SubmissionsController : ControllerBase
 
         if (!isOwnerTeacher && !isStudentOwner)
         {
-             _logger.LogWarning("User {UserId} forbidden from viewing submission {SubmissionId} details.", currentUserId, submissionId);
+            _logger.LogWarning("User {UserId} forbidden from viewing submission {SubmissionId} details.", currentUserId, submissionId);
             return Forbid();
         }
 
@@ -683,9 +685,9 @@ public class SubmissionsController : ControllerBase
     {
         if (!ModelState.IsValid)
         {
-             // Return validation errors if DTO constraints aren't met
-             // (e.g., if Grade had range attributes)
-             return BadRequest(ModelState);
+            // Return validation errors if DTO constraints aren't met
+            // (e.g., if Grade had range attributes)
+            return BadRequest(ModelState);
         }
 
         int currentUserId;
@@ -697,7 +699,7 @@ public class SubmissionsController : ControllerBase
 
         if (submission == null)
         {
-             _logger.LogWarning("Grading failed: Submission {SubmissionId} not found.", submissionId);
+            _logger.LogWarning("Grading failed: Submission {SubmissionId} not found.", submissionId);
             return NotFound(new { message = "Submission not found." });
         }
 
@@ -705,7 +707,7 @@ public class SubmissionsController : ControllerBase
         var userRole = await GetUserRoleInClassroom(currentUserId, submission.Assignment.ClassroomId);
         if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
         {
-             _logger.LogWarning("User {UserId} forbidden from grading submission {SubmissionId}.", currentUserId, submissionId);
+            _logger.LogWarning("User {UserId} forbidden from grading submission {SubmissionId}.", currentUserId, submissionId);
             return Forbid();
         }
 
@@ -726,13 +728,13 @@ public class SubmissionsController : ControllerBase
         try
         {
             await _context.SaveChangesAsync();
-             _logger.LogInformation("User {UserId} successfully graded submission {SubmissionId}. Grade: {Grade}, Feedback: {FeedbackProvided}",
-                currentUserId, submissionId, dto.Grade?.ToString() ?? "N/A", !string.IsNullOrEmpty(dto.Feedback));
+            _logger.LogInformation("User {UserId} successfully graded submission {SubmissionId}. Grade: {Grade}, Feedback: {FeedbackProvided}",
+               currentUserId, submissionId, dto.Grade?.ToString() ?? "N/A", !string.IsNullOrEmpty(dto.Feedback));
         }
-         catch (DbUpdateException dbEx)
+        catch (DbUpdateException dbEx)
         {
             _logger.LogError(dbEx, "Database error while grading submission {SubmissionId} by user {UserId}.", submissionId, currentUserId);
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving grade." });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving grade." });
         }
 
 
@@ -744,10 +746,10 @@ public class SubmissionsController : ControllerBase
              .FirstOrDefaultAsync(s => s.Id == submission.Id); // Fetch by ID
 
         // Defensive check in case fetch fails immediately after save (highly unlikely)
-        if(updatedSubmission == null)
+        if (updatedSubmission == null)
         {
-             _logger.LogError("Failed to reload submission {SubmissionId} after grading.", submission.Id);
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to retrieve updated submission details after grading." });
+            _logger.LogError("Failed to reload submission {SubmissionId} after grading.", submission.Id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to retrieve updated submission details after grading." });
         }
 
         // --- Map to DTO Start ---
@@ -776,5 +778,268 @@ public class SubmissionsController : ControllerBase
         // --- Map to DTO End ---
 
         return Ok(responseDto); // Return the full updated state
+    }
+
+    // POST /api/assignments/{assignmentId}/submissions/my/create-file - Create Empty File Record
+    [HttpPost("assignments/{assignmentId}/submissions/my/create-file")]
+    [ProducesResponseType(typeof(SubmittedFileDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)] // If file already exists
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> CreateVirtualFile(int assignmentId, [FromBody] CreateVirtualFileDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+
+        // Find or create submission (ensures user is student & assignment exists)
+        var submission = await FindOrCreateSubmission(currentUserId, assignmentId);
+        if (submission == null)
+        {
+            var assignmentExists = await _context.Assignments.AnyAsync(a => a.Id == assignmentId);
+            if (!assignmentExists) return NotFound(new { message = "Assignment not found." });
+            _logger.LogWarning("User {UserId} forbidden from creating file for assignment {AssignmentId}.", currentUserId, assignmentId);
+            return Forbid();
+        }
+
+        // Ensure submission record has an ID before proceeding
+        if (submission.Id == 0 && _context.Entry(submission).State == EntityState.Added)
+        {
+            try { await _context.SaveChangesAsync(); } // Save submission if it's new
+            catch (DbUpdateException dbEx)
+            {
+                _logger.LogError(dbEx, "Database error saving new submission record for user {UserId}, assignment {AssignmentId} before creating file.", currentUserId, assignmentId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error preparing submission." });
+            }
+        }
+
+        // Check if file with this name already exists for this submission
+        bool fileExists = await _context.SubmittedFiles
+            .AnyAsync(f => f.AssignmentSubmissionId == submission.Id && f.FileName == dto.FileName);
+
+        if (fileExists)
+        {
+            _logger.LogWarning("User {UserId} attempted to create duplicate file '{FileName}' for submission {SubmissionId}.", currentUserId, dto.FileName, submission.Id);
+            return Conflict(new { message = $"A file named '{dto.FileName}' already exists for this submission." });
+        }
+
+        // Create the empty file in storage
+        string storedFileName;
+        string relativePath;
+        try
+        {
+            (storedFileName, relativePath) = await _fileService.CreateEmptyFileAsync(submission.Id, dto.FileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "File storage service failed to create empty file '{FileName}' for submission {SubmissionId}", dto.FileName, submission.Id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred while creating the file in storage." });
+        }
+
+        // Create the DB record
+        var submittedFile = new SubmittedFile
+        {
+            AssignmentSubmissionId = submission.Id,
+            FileName = dto.FileName,
+            StoredFileName = storedFileName,
+            FilePath = relativePath,
+            ContentType = "text/plain", // Default for code files, or derive from extension
+            FileSize = 0, // Empty file
+            UploadedAt = DateTime.UtcNow
+        };
+
+        _context.SubmittedFiles.Add(submittedFile);
+
+        try
+        {
+            await _context.SaveChangesAsync(); // Save the file record
+            _logger.LogInformation("Saved SubmittedFile record {FileId} ('{FileName}') for submission {SubmissionId}.", submittedFile.Id, dto.FileName, submission.Id);
+        }
+        catch (DbUpdateException dbEx)
+        {
+            _logger.LogError(dbEx, "Database error saving SubmittedFile record for '{FileName}', submission {SubmissionId}.", dto.FileName, submission.Id);
+            // Attempt to clean up the file that was just created in storage
+            await _fileService.DeleteSubmissionFileAsync(relativePath, storedFileName);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving file information." });
+        }
+
+        // Map to DTO
+        var responseDto = new SubmittedFileDto
+        {
+            Id = submittedFile.Id,
+            FileName = submittedFile.FileName,
+            ContentType = submittedFile.ContentType ?? "application/octet-stream",
+            FileSize = submittedFile.FileSize,
+            UploadedAt = submittedFile.UploadedAt
+        };
+
+        // Return 201 Created
+        return CreatedAtAction(
+            nameof(DownloadSubmittedFile), // Points to download endpoint
+            new { submissionId = submission.Id, fileId = submittedFile.Id },
+            responseDto
+        );
+    }
+
+    // --- NEW Endpoint: Get File Content ---
+    [HttpGet("submissions/{submissionId}/files/{fileId}/content")]
+    [Produces("text/plain")] // Explicitly state the production MIME type
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetSubmittedFileContent(int submissionId, int fileId)
+    {
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+
+        // Fetch file record including submission and assignment for auth checks
+        var fileRecord = await _context.SubmittedFiles
+            .Include(f => f.AssignmentSubmission)
+                .ThenInclude(s => s!.Assignment) // Use null-forgiving operator if sure s isn't null
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.AssignmentSubmissionId == submissionId);
+
+        if (fileRecord == null)
+        {
+            return NotFound(new { message = "File record not found." });
+        }
+
+        // Auth Check: Owner/Teacher of class OR student owner
+        var userRole = await GetUserRoleInClassroom(currentUserId, fileRecord.AssignmentSubmission.Assignment.ClassroomId);
+        bool isOwnerTeacher = userRole == ClassroomRole.Owner || userRole == ClassroomRole.Teacher;
+        bool isStudentOwner = fileRecord.AssignmentSubmission.StudentId == currentUserId;
+
+        if (!isOwnerTeacher && !isStudentOwner)
+        {
+             _logger.LogWarning("User {UserId} forbidden from accessing content of file {FileId} on submission {SubmissionId}.", currentUserId, fileId, submissionId);
+            return Forbid();
+        }
+
+        // Get file stream from storage service
+        var (fileStream, _, _) = await _fileService.GetSubmissionFileAsync(
+            fileRecord.FilePath,
+            fileRecord.StoredFileName,
+            fileRecord.FileName
+        );
+
+        if (fileStream == null)
+        {
+             _logger.LogError("File record {FileId} found in DB but file not found in storage: Path='{FilePath}', Name='{StoredFileName}'",
+                        fileId, fileRecord.FilePath, fileRecord.StoredFileName);
+            // Return 404 even if DB record exists, as content is missing
+            return NotFound(new { message = "File content not found in storage." });
+        }
+
+        // Read stream content into string (assuming UTF8)
+        string fileContent;
+        try
+        {
+            using (var reader = new StreamReader(fileStream, Encoding.UTF8))
+            {
+                fileContent = await reader.ReadToEndAsync();
+            } // Stream is disposed here
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading content stream for file {FileId}", fileId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error reading file content." });
+        }
+
+        // Return raw content with text/plain content type
+        return Content(fileContent, "text/plain", Encoding.UTF8);
+    }
+
+    // --- NEW Endpoint: Update File Content ---
+    [HttpPut("submissions/{submissionId}/files/{fileId}/content")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)] // Success, no content body needed
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UpdateSubmittedFileContent(int submissionId, int fileId)
+    {
+        // Manually read the request body
+        string content;
+        using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+        {
+            content = await reader.ReadToEndAsync();
+        }
+
+        // Check if content is provided (FromBody might bind null if body is empty)
+        if (content == null)
+        {
+            return BadRequest(new { message = "Request body cannot be empty." });
+        }
+
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+
+        // Fetch the file record including the submission for auth checks
+        var fileRecord = await _context.SubmittedFiles
+            .Include(f => f.AssignmentSubmission)
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.AssignmentSubmissionId == submissionId);
+
+        if (fileRecord == null)
+        {
+            return NotFound(new { message = "File record not found." });
+        }
+
+        // Auth Check: Must be the student owner of the submission
+        if (fileRecord.AssignmentSubmission.StudentId != currentUserId)
+        {
+            _logger.LogWarning("User {UserId} forbidden from updating content of file {FileId} (not owner).", currentUserId, fileId);
+            return Forbid();
+        }
+
+        // Lock Check: Cannot edit if graded
+        if (fileRecord.AssignmentSubmission.Grade.HasValue)
+        {
+            _logger.LogWarning("User {UserId} attempted to update content of file {FileId} from graded submission {SubmissionId}.", currentUserId, fileId, submissionId);
+            return BadRequest(new { message = "Cannot edit content of a graded submission." });
+        }
+
+        // Overwrite the physical file using the file service
+        bool success = false;
+        try
+        {
+             success = await _fileService.OverwriteSubmissionFileAsync(fileRecord.FilePath, fileRecord.StoredFileName, content);
+        }
+        catch(Exception ex)
+        {
+             _logger.LogError(ex, "File service failed during overwrite for file {FileId}.", fileId);
+             // Fall through to return 500 below if success remains false
+        }
+
+        if (!success)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update file content in storage." });
+        }
+
+
+        // Update database record (FileSize and potentially a LastModified timestamp if added)
+        fileRecord.FileSize = Encoding.UTF8.GetByteCount(content); // Update file size
+        // fileRecord.LastModifiedAt = DateTime.UtcNow; // If you add such a field
+
+        _context.Entry(fileRecord).State = EntityState.Modified;
+
+        try
+        {
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("User {UserId} successfully updated content for file {FileId}.", currentUserId, fileId);
+        }
+        catch (DbUpdateException dbEx)
+        {
+             _logger.LogError(dbEx, "Database error updating SubmittedFile record {FileId} after content update.", fileId);
+             // Potentially inconsistent state: file updated in storage but DB failed. Difficult to roll back storage.
+             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving file metadata after update." });
+        }
+
+        return NoContent(); // Success
     }
 }

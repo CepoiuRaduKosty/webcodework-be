@@ -1,10 +1,12 @@
 // Services/AzureBlobStorageService.cs
+using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace WebCodeWork.Services
@@ -19,6 +21,10 @@ namespace WebCodeWork.Services
 
         // Gets a stream for downloading, content type, and preferred download name
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName);
+        Task<(string StoredFileName, string RelativePath)> CreateEmptyFileAsync(int submissionId, string desiredFileName);
+        // Overwrites the content of an existing file with the provided string content.
+        // Returns true on success, false on failure (e.g., file not found in storage).
+        Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent);
     }
 }
 
@@ -46,7 +52,7 @@ namespace WebCodeWork.Services
             _blobServiceClient = new BlobServiceClient(connectionString);
 
             // Ensure container exists (optional: could require manual creation)
-             EnsureContainerExistsAsync().ConfigureAwait(false).GetAwaiter().GetResult(); // Run synchronously in constructor (or use async factory)
+            EnsureContainerExistsAsync().ConfigureAwait(false).GetAwaiter().GetResult(); // Run synchronously in constructor (or use async factory)
         }
 
         private async Task EnsureContainerExistsAsync()
@@ -82,18 +88,18 @@ namespace WebCodeWork.Services
             }
             catch (Exception ex)
             {
-                 _logger.LogError(ex, "Error uploading file {FileName} to blob {BlobPath}", file.FileName, blobPath);
+                _logger.LogError(ex, "Error uploading file {FileName} to blob {BlobPath}", file.FileName, blobPath);
                 throw; // Re-throw to indicate failure
             }
         }
 
-         public async Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName) // relativePath here is the directory structure, storedFileName is the unique blob name
+        public async Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName) // relativePath here is the directory structure, storedFileName is the unique blob name
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/"); // Construct full blob path
             var blobClient = containerClient.GetBlobClient(blobPath);
 
-             _logger.LogInformation("Attempting to delete blob {BlobPath}...", blobPath);
+            _logger.LogInformation("Attempting to delete blob {BlobPath}...", blobPath);
             try
             {
                 var response = await blobClient.DeleteIfExistsAsync();
@@ -104,8 +110,8 @@ namespace WebCodeWork.Services
                 }
                 else
                 {
-                     _logger.LogWarning("Blob {BlobPath} did not exist or already deleted.", blobPath);
-                     return false; // Indicate file didn't exist
+                    _logger.LogWarning("Blob {BlobPath} did not exist or already deleted.", blobPath);
+                    return false; // Indicate file didn't exist
                 }
             }
             catch (Exception ex)
@@ -115,34 +121,120 @@ namespace WebCodeWork.Services
             }
         }
 
-          public async Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName)
-         {
-             var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
-             var blobClient = containerClient.GetBlobClient(blobPath);
+        public async Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
+            var blobClient = containerClient.GetBlobClient(blobPath);
 
-             _logger.LogInformation("Attempting to download blob {BlobPath}...", blobPath);
+            _logger.LogInformation("Attempting to download blob {BlobPath}...", blobPath);
 
-             try
-             {
-                 if (!await blobClient.ExistsAsync())
-                 {
-                      _logger.LogWarning("Blob {BlobPath} not found for download.", blobPath);
-                     return (null, null, originalFileName);
-                 }
+            try
+            {
+                if (!await blobClient.ExistsAsync())
+                {
+                    _logger.LogWarning("Blob {BlobPath} not found for download.", blobPath);
+                    return (null, null, originalFileName);
+                }
 
-                 // Get properties to fetch content type
-                 BlobProperties properties = await blobClient.GetPropertiesAsync();
-                 // Get stream
-                 var response = await blobClient.DownloadStreamingAsync(); // Use DownloadStreamingAsync for efficiency
+                // Get properties to fetch content type
+                BlobProperties properties = await blobClient.GetPropertiesAsync();
+                // Get stream
+                var response = await blobClient.DownloadStreamingAsync(); // Use DownloadStreamingAsync for efficiency
 
-                 return (response.Value.Content, properties.ContentType, originalFileName);
-             }
-              catch (Exception ex)
-             {
-                  _logger.LogError(ex, "Error downloading blob {BlobPath}", blobPath);
-                  return (null, null, originalFileName); // Indicate failure
-             }
-         }
+                return (response.Value.Content, properties.ContentType, originalFileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error downloading blob {BlobPath}", blobPath);
+                return (null, null, originalFileName); // Indicate failure
+            }
+        }
+
+        public async Task<(string StoredFileName, string RelativePath)> CreateEmptyFileAsync(int submissionId, string desiredFileName)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var extension = Path.GetExtension(desiredFileName);
+            var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
+            var relativePath = $"submissions/{submissionId}"; // Directory structure
+            var blobPath = $"{relativePath}/{uniqueBlobName}"; // Full path within container
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Creating empty blob {BlobPath} ({OriginalName}) for submission {SubmissionId}...", blobPath, desiredFileName, submissionId);
+
+            try
+            {
+                // Upload an empty stream
+                using (var stream = new MemoryStream()) // Empty stream
+                {
+                    // Attempt to determine content type based on desired name
+                    var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+                    if (!provider.TryGetContentType(desiredFileName, out var contentType))
+                    {
+                        contentType = "application/octet-stream"; // Default if unknown
+                    }
+
+                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = contentType });
+                    // Optionally, you could set metadata here if needed
+                }
+
+                _logger.LogInformation("Successfully created empty blob {BlobPath} ({OriginalName})", blobPath, desiredFileName);
+                return (uniqueBlobName, relativePath); // Return unique name and its 'folder'
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating empty blob {BlobPath} ({OriginalName})", blobPath, desiredFileName);
+                throw;
+            }
+        }
+
+        // --- NEW Method Implementation ---
+        public async Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Attempting to overwrite blob {BlobPath}...", blobPath);
+
+            try
+            {
+                // Check if blob exists before trying to overwrite (optional, UploadAsync with overwrite=true handles it)
+                // if (!await blobClient.ExistsAsync())
+                // {
+                //     _logger.LogWarning("Blob {BlobPath} not found for overwriting.", blobPath);
+                //     return false;
+                // }
+
+                // Convert string content to a stream (UTF8)
+                byte[] byteArray = Encoding.UTF8.GetBytes(newContent);
+                using (var stream = new MemoryStream(byteArray))
+                {
+                    // Determine content type (e.g., based on filename extension)
+                    var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+                    if (!provider.TryGetContentType(storedFileName, out var contentType))
+                    {
+                        contentType = "text/plain"; // Default to text/plain for code? Or keep original? Let's default.
+                    }
+
+                    BlobUploadOptions uploadOptions = new BlobUploadOptions
+                    {
+                        HttpHeaders = new BlobHttpHeaders { ContentType = contentType },
+                        Conditions = null
+                    };
+
+                    // Upload the new content, overwriting the existing blob
+                    await blobClient.UploadAsync(stream, uploadOptions);
+                }
+
+                _logger.LogInformation("Successfully overwrote blob {BlobPath}", blobPath);
+                return true;
+            }
+            catch (Exception ex) // Catch RequestFailedException specifically if needed
+            {
+                _logger.LogError(ex, "Error overwriting blob {BlobPath}", blobPath);
+                return false; // Indicate failure
+            }
+        }
     }
 }
