@@ -19,6 +19,8 @@ namespace WebCodeWork.Data
         public DbSet<AssignmentSubmission> AssignmentSubmissions { get; set; }
         public DbSet<SubmittedFile> SubmittedFiles { get; set; }
 
+        public DbSet<TestCase> TestCases { get; set; } // Add DbSet for TestCase
+
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -97,7 +99,19 @@ namespace WebCodeWork.Data
                 .HasForeignKey(f => f.AssignmentSubmissionId)
                 .OnDelete(DeleteBehavior.Cascade); // Deleting submission deletes its files
 
+            // --- TestCase Configuration ---
 
+            modelBuilder.Entity<TestCase>()
+                .HasOne(tc => tc.Assignment)
+                .WithMany(a => a.TestCases) // Use navigation property in Assignment
+                .HasForeignKey(tc => tc.AssignmentId)
+                .OnDelete(DeleteBehavior.Cascade); // Deleting assignment deletes its test cases
+
+            modelBuilder.Entity<TestCase>()
+                .HasOne(tc => tc.AddedBy)
+                .WithMany() // Assuming User doesn't need direct nav prop back to test cases they added
+                .HasForeignKey(tc => tc.AddedById)
+                .OnDelete(DeleteBehavior.Restrict); // Prevent deleting user if they added test cases? Or SetNull?
         }
     }
 }

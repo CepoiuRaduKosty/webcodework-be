@@ -25,6 +25,11 @@ namespace WebCodeWork.Services
         // Overwrites the content of an existing file with the provided string content.
         // Returns true on success, false on failure (e.g., file not found in storage).
         Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent);
+
+        // --- NEW Test Case File Methods ---
+        Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file); // fileTypeDir = "input" or "output"
+        Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName);
+        Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetTestCaseFileAsync(string relativePath, string storedFileName, string originalFileName);
     }
 }
 
@@ -36,6 +41,8 @@ namespace WebCodeWork.Services
         private readonly BlobServiceClient _blobServiceClient;
         private readonly string _containerName;
         private readonly ILogger<AzureBlobStorageService> _logger;
+
+        private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; // e.g., testcases/123/input
 
         public AzureBlobStorageService(IConfiguration configuration, ILogger<AzureBlobStorageService> logger)
         {
@@ -235,6 +242,49 @@ namespace WebCodeWork.Services
                 _logger.LogError(ex, "Error overwriting blob {BlobPath}", blobPath);
                 return false; // Indicate failure
             }
+        }
+
+        public async Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var relativeDirPath = GetTestCaseBlobDir(assignmentId, fileTypeDir);
+            var extension = Path.GetExtension(file.FileName);
+            var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
+            var blobPath = $"{relativeDirPath}/{uniqueBlobName}";
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Uploading test case file {FileName} to blob {BlobPath} ({Type}) for assignment {AssignmentId}...", file.FileName, blobPath, fileTypeDir, assignmentId);
+            try
+            {
+                using (var stream = file.OpenReadStream())
+                {
+                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = file.ContentType });
+                }
+                _logger.LogInformation("Successfully uploaded test case file {FileName} to blob {BlobPath}", file.FileName, blobPath);
+                return (uniqueBlobName, relativeDirPath);
+            }
+            catch (Exception ex) { /* ... Log error, throw ... */ throw; }
+        }
+
+        public Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName)
+        {
+            // Logic is identical to submission files for Azure Blob
+            return DeleteSubmissionFileAsync(relativePath, storedFileName);
+            // Or implement separately:
+            // var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            // var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
+            // var blobClient = containerClient.GetBlobClient(blobPath);
+            // try { ... blobClient.DeleteIfExistsAsync ... } catch { ... }
+        }
+
+        public Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetTestCaseFileAsync(string relativePath, string storedFileName, string originalFileName)
+        {
+            // Logic is identical to submission files for Azure Blob
+            return GetSubmissionFileAsync(relativePath, storedFileName, originalFileName);
+            // Or implement separately:
+            // var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            // var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
+            // ... etc ...
         }
     }
 }

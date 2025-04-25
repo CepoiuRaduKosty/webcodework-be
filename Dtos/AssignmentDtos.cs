@@ -11,6 +11,9 @@ namespace WebCodeWork.Dtos
         public string? Instructions { get; set; }
         public DateTime? DueDate { get; set; }
         public int? MaxPoints { get; set; }
+
+        public bool IsCodeAssignment { get; set; } = false;
+        
     }
 
     public class UpdateAssignmentDto : CreateAssignmentDto // Can inherit or be separate
@@ -25,9 +28,10 @@ namespace WebCodeWork.Dtos
         public int? MaxPoints { get; set; }
         // Add submission status for current user if needed
         public string? SubmissionStatus { get; set; } // e.g., "Not Submitted", "Submitted", "Late", "Graded"
+        public bool IsCodeAssignment { get; set; }
     }
 
-     public class AssignmentDetailsDto : AssignmentBasicDto // For detail view
+    public class AssignmentDetailsDto : AssignmentBasicDto // For detail view
     {
         public string? Instructions { get; set; }
         public int CreatedById { get; set; }
@@ -65,7 +69,7 @@ namespace WebCodeWork.Dtos
         public List<SubmittedFileDto> SubmittedFiles { get; set; } = new List<SubmittedFileDto>();
     }
 
-     public class SubmissionSummaryDto // For lists shown to teachers
+    public class SubmissionSummaryDto // For lists shown to teachers
     {
         public int Id { get; set; }
         public int StudentId { get; set; }
@@ -78,7 +82,7 @@ namespace WebCodeWork.Dtos
 
     public class GradeSubmissionDto
     {
-         // Use nullable types to allow partial updates (only grade or only feedback)
+        // Use nullable types to allow partial updates (only grade or only feedback)
         public int? Grade { get; set; }
         public string? Feedback { get; set; }
     }

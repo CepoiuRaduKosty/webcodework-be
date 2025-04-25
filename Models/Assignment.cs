@@ -32,5 +32,11 @@ namespace WebCodeWork.Models
         public virtual User CreatedBy { get; set; } = null!;
 
         public virtual ICollection<AssignmentSubmission> Submissions { get; set; } = new List<AssignmentSubmission>();
+
+        [Required] // Make IsCodeAssignment required
+        public bool IsCodeAssignment { get; set; } = false; // Default to false
+
+        // Add navigation property for test cases
+        public virtual ICollection<TestCase> TestCases { get; set; } = new List<TestCase>();
     }
 }
