@@ -52,9 +52,9 @@ namespace WebCodeWork.Controllers
             // Verify IsCodeAssignment flag (redundant if only code assignments have test cases, but safe)
             if (!testCase.Assignment.IsCodeAssignment)
             {
-                 _logger.LogWarning("Attempt to access test case {TestCaseId} for non-code assignment {AssignmentId}", testCaseId, testCase.AssignmentId);
-                 // Treat as Not Found or Forbidden? Let's use Forbidden.
-                 return (null, Forbid());
+                _logger.LogWarning("Attempt to access test case {TestCaseId} for non-code assignment {AssignmentId}", testCaseId, testCase.AssignmentId);
+                // Treat as Not Found or Forbidden? Let's use Forbidden.
+                return (null, Forbid());
             }
 
             // Verify user is Owner/Teacher in the classroom
@@ -65,7 +65,7 @@ namespace WebCodeWork.Controllers
 
             if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
             {
-                 _logger.LogWarning("User {UserId} forbidden from accessing test case {TestCaseId}.", currentUserId, testCaseId);
+                _logger.LogWarning("User {UserId} forbidden from accessing test case {TestCaseId}.", currentUserId, testCaseId);
                 return (null, Forbid());
             }
 
@@ -143,41 +143,22 @@ namespace WebCodeWork.Controllers
 
         // PUT /api/testcases/{testCaseId}/input/content
         [HttpPut("{testCaseId}/input/content")]
-        [Consumes("text/plain")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
-        // ... other response types ...
-        public async Task<IActionResult> UpdateTestCaseInputContent(int testCaseId, [FromBody] string content)
-        {
-             if (content == null) return BadRequest(new { message = "Request body cannot be empty." });
-
-             int currentUserId;
-             try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
-
-             var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
-             if (errorResult != null) return errorResult;
-
-            // Overwrite file content
-             bool success = false;
-             try { success = await _fileService.OverwriteSubmissionFileAsync(testCase!.InputFilePath, testCase.InputStoredFileName, content); }
-             catch(Exception ex) { _logger.LogError(ex, "File service failed during input overwrite for test case {TestCaseId}.", testCaseId); }
-
-             if (!success) return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update input file content in storage." });
-
-             // Update DB? (e.g., file size, modified date if tracking) - Optional for now
-             // testCase.InputFileSize = Encoding.UTF8.GetByteCount(content);
-             // _context.Entry(testCase).State = EntityState.Modified;
-             // try { await _context.SaveChangesAsync(); } catch { /* Log, maybe return 500 */ }
-
-            return NoContent();
-        }
-
-        // PUT /api/testcases/{testCaseId}/output/content
-        [HttpPut("{testCaseId}/output/content")]
-        [Consumes("text/plain")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
-        // ... other response types ...
-        public async Task<IActionResult> UpdateTestCaseOutputContent(int testCaseId, [FromBody] string content)
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> UpdateTestCaseInputContent(int testCaseId)
         {
+            // Manually read the request body
+            string content;
+            using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+            {
+                content = await reader.ReadToEndAsync();
+            }
+
             if (content == null) return BadRequest(new { message = "Request body cannot be empty." });
 
             int currentUserId;
@@ -186,14 +167,52 @@ namespace WebCodeWork.Controllers
             var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
             if (errorResult != null) return errorResult;
 
-             // Overwrite file content
-             bool success = false;
-             try { success = await _fileService.OverwriteSubmissionFileAsync(testCase!.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName, content); }
-             catch(Exception ex) { _logger.LogError(ex, "File service failed during output overwrite for test case {TestCaseId}.", testCaseId); }
+            // Overwrite file content
+            bool success = false;
+            try { success = await _fileService.OverwriteSubmissionFileAsync(testCase!.InputFilePath, testCase.InputStoredFileName, content); }
+            catch (Exception ex) { _logger.LogError(ex, "File service failed during input overwrite for test case {TestCaseId}.", testCaseId); }
 
-             if (!success) return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update output file content in storage." });
+            if (!success) return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update input file content in storage." });
 
-             // Update DB? (e.g., file size, modified date if tracking) - Optional for now
+            // Update DB? (e.g., file size, modified date if tracking) - Optional for now
+            // testCase.InputFileSize = Encoding.UTF8.GetByteCount(content);
+            // _context.Entry(testCase).State = EntityState.Modified;
+            // try { await _context.SaveChangesAsync(); } catch { /* Log, maybe return 500 */ }
+
+            return NoContent();
+        }
+
+        // PUT /api/testcases/{testCaseId}/output/content
+        [HttpPut("{testCaseId}/output/content")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> UpdateTestCaseOutputContent(int testCaseId)
+        {
+            // Manually read the request body
+            string content;
+            using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+            {
+                content = await reader.ReadToEndAsync();
+            }
+
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+
+            var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
+            if (errorResult != null) return errorResult;
+
+            // Overwrite file content
+            bool success = false;
+            try { success = await _fileService.OverwriteSubmissionFileAsync(testCase!.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName, content); }
+            catch (Exception ex) { _logger.LogError(ex, "File service failed during output overwrite for test case {TestCaseId}.", testCaseId); }
+
+            if (!success) return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update output file content in storage." });
+
+            // Update DB? (e.g., file size, modified date if tracking) - Optional for now
 
             return NoContent();
         }
