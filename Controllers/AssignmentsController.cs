@@ -88,34 +88,35 @@ public class AssignmentsController : ControllerBase
     // ... other response types ...
     public async Task<IActionResult> CreateAssignment(int classroomId, [FromBody] CreateAssignmentDto dto)
     {
-         if (!ModelState.IsValid) return BadRequest(ModelState);
-         int currentUserId = GetCurrentUserId();
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        int currentUserId = GetCurrentUserId();
 
-         // Auth Check: User must be Owner or Teacher in the classroom
-         var userRole = await GetUserRoleInClassroom(currentUserId, classroomId);
-         if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
-         {
-             return Forbid();
-         }
+        // Auth Check: User must be Owner or Teacher in the classroom
+        var userRole = await GetUserRoleInClassroom(currentUserId, classroomId);
+        if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
+        {
+            return Forbid();
+        }
 
-         var assignment = new Assignment
-         {
-             ClassroomId = classroomId,
-             Title = dto.Title,
-             Instructions = dto.Instructions,
-             CreatedById = currentUserId,
-             CreatedAt = DateTime.UtcNow,
-             DueDate = dto.DueDate?.ToUniversalTime(), // Ensure UTC
-             MaxPoints = dto.MaxPoints,
-             IsCodeAssignment = dto.IsCodeAssignment
-         };
+        var assignment = new Assignment
+        {
+            ClassroomId = classroomId,
+            Title = dto.Title,
+            Instructions = dto.Instructions,
+            CreatedById = currentUserId,
+            CreatedAt = DateTime.UtcNow,
+            DueDate = dto.DueDate?.ToUniversalTime(), // Ensure UTC
+            MaxPoints = dto.MaxPoints,
+            IsCodeAssignment = dto.IsCodeAssignment
+        };
 
-         _context.Assignments.Add(assignment);
-         await _context.SaveChangesAsync();
+        _context.Assignments.Add(assignment);
+        await _context.SaveChangesAsync();
 
-         // Map to response DTO (fetch creator username if needed)
-         var createdBy = await _context.Users.FindAsync(currentUserId);
-         var responseDto = new AssignmentDetailsDto { 
+        // Map to response DTO (fetch creator username if needed)
+        var createdBy = await _context.Users.FindAsync(currentUserId);
+        var responseDto = new AssignmentDetailsDto
+        {
             CreatedByUsername = createdBy?.Username ?? "N/A",
             CreatedById = currentUserId,
             ClassroomId = classroomId,
@@ -127,7 +128,7 @@ public class AssignmentsController : ControllerBase
             IsCodeAssignment = assignment.IsCodeAssignment,
         };
 
-         return CreatedAtAction(nameof(GetAssignmentDetails), new { assignmentId = assignment.Id }, responseDto);
+        return CreatedAtAction(nameof(GetAssignmentDetails), new { assignmentId = assignment.Id }, responseDto);
     }
 
     // GET /api/classrooms/{classroomId}/assignments - List Assignments for Classroom
@@ -145,14 +146,14 @@ public class AssignmentsController : ControllerBase
         var userRole = await GetUserRoleInClassroom(currentUserId, classroomId);
         if (userRole == null)
         {
-             // Check if classroom exists at all before returning Forbid
-             var classroomExists = await _context.Classrooms.AnyAsync(c => c.Id == classroomId);
-             if (!classroomExists)
-             {
-                 return NotFound(new { message = $"Classroom with ID {classroomId} not found." });
-             }
-             _logger.LogWarning("User {UserId} forbidden from accessing assignments for classroom {ClassroomId}.", currentUserId, classroomId);
-             return Forbid();
+            // Check if classroom exists at all before returning Forbid
+            var classroomExists = await _context.Classrooms.AnyAsync(c => c.Id == classroomId);
+            if (!classroomExists)
+            {
+                return NotFound(new { message = $"Classroom with ID {classroomId} not found." });
+            }
+            _logger.LogWarning("User {UserId} forbidden from accessing assignments for classroom {ClassroomId}.", currentUserId, classroomId);
+            return Forbid();
         }
 
         // --- Select and Map Assignment data ---
@@ -175,53 +176,53 @@ public class AssignmentsController : ControllerBase
             .ToListAsync(); // Execute the query to get the initial list
 
         // --- Enhance DTO with submission status for students ---
-         if (userRole == ClassroomRole.Student)
-         {
-             var assignmentIds = assignments.Select(a => a.Id).ToList();
-             // Avoid fetching if there are no assignments
-             if (assignmentIds.Any())
-             {
-                 // Fetch relevant submissions for this student efficiently
-                 var submissions = await _context.AssignmentSubmissions
-                     .Where(s => s.StudentId == currentUserId && assignmentIds.Contains(s.AssignmentId))
-                     .Select(s => new // Select only needed fields for status calculation
-                     {
-                         s.AssignmentId,
-                         s.SubmittedAt,
-                         s.Grade,
-                         s.IsLate
-                     })
-                     .ToDictionaryAsync(s => s.AssignmentId); // Efficient lookup by AssignmentId
+        if (userRole == ClassroomRole.Student)
+        {
+            var assignmentIds = assignments.Select(a => a.Id).ToList();
+            // Avoid fetching if there are no assignments
+            if (assignmentIds.Any())
+            {
+                // Fetch relevant submissions for this student efficiently
+                var submissions = await _context.AssignmentSubmissions
+                    .Where(s => s.StudentId == currentUserId && assignmentIds.Contains(s.AssignmentId))
+                    .Select(s => new // Select only needed fields for status calculation
+                    {
+                        s.AssignmentId,
+                        s.SubmittedAt,
+                        s.Grade,
+                        s.IsLate
+                    })
+                    .ToDictionaryAsync(s => s.AssignmentId); // Efficient lookup by AssignmentId
 
-                 // Populate the SubmissionStatus in the DTO list
-                 foreach (var dto in assignments)
-                 {
-                     if (submissions.TryGetValue(dto.Id, out var submission))
-                     {
-                         // Submission record exists
-                         if (submission.Grade.HasValue)
-                         {
-                             dto.SubmissionStatus = "Graded";
-                         }
-                         else if (submission.SubmittedAt.HasValue)
-                         {
-                             dto.SubmissionStatus = submission.IsLate ? "Submitted (Late)" : "Submitted";
-                         }
-                         else
-                         {
-                             // Submission record exists but SubmittedAt is null - implies student started (e.g., uploaded file) but didn't click "Turn In"
-                             dto.SubmissionStatus = "In Progress";
-                         }
-                     }
-                     else
-                     {
-                         // No submission record found for this assignment and student
-                         dto.SubmissionStatus = "Not Submitted";
-                     }
-                 }
-             }
-         }
-         // Teachers/Owners will not have the SubmissionStatus field populated (it remains null)
+                // Populate the SubmissionStatus in the DTO list
+                foreach (var dto in assignments)
+                {
+                    if (submissions.TryGetValue(dto.Id, out var submission))
+                    {
+                        // Submission record exists
+                        if (submission.Grade.HasValue)
+                        {
+                            dto.SubmissionStatus = "Graded";
+                        }
+                        else if (submission.SubmittedAt.HasValue)
+                        {
+                            dto.SubmissionStatus = submission.IsLate ? "Submitted (Late)" : "Submitted";
+                        }
+                        else
+                        {
+                            // Submission record exists but SubmittedAt is null - implies student started (e.g., uploaded file) but didn't click "Turn In"
+                            dto.SubmissionStatus = "In Progress";
+                        }
+                    }
+                    else
+                    {
+                        // No submission record found for this assignment and student
+                        dto.SubmissionStatus = "Not Submitted";
+                    }
+                }
+            }
+        }
+        // Teachers/Owners will not have the SubmissionStatus field populated (it remains null)
 
         return Ok(assignments);
     }
@@ -249,11 +250,11 @@ public class AssignmentsController : ControllerBase
         {
             return Forbid();
         }
-        
+
 
         // Map to DTO
-         var dto = new AssignmentDetailsDto
-         {
+        var dto = new AssignmentDetailsDto
+        {
             Id = assignment.Id,
             Title = assignment.Title,
             Instructions = assignment.Instructions,
@@ -264,8 +265,8 @@ public class AssignmentsController : ControllerBase
             CreatedByUsername = assignment.CreatedBy.Username, // Get username from included entity
             ClassroomId = assignment.ClassroomId,
             IsCodeAssignment = assignment.IsCodeAssignment,
-         };
-         return Ok(dto);
+        };
+        return Ok(dto);
     }
 
     // PUT /api/assignments/{assignmentId} - Update Assignment
@@ -281,7 +282,7 @@ public class AssignmentsController : ControllerBase
         int currentUserId = GetCurrentUserId();
 
         var assignment = await _context.Assignments
-                                       .Include(a=> a.CreatedBy) // Needed for response DTO
+                                       .Include(a => a.CreatedBy) // Needed for response DTO
                                        .FirstOrDefaultAsync(a => a.Id == assignmentId);
         if (assignment == null) return NotFound();
 
@@ -292,8 +293,9 @@ public class AssignmentsController : ControllerBase
         }
 
         // Prevent changing IsCodeAssignment if test cases exist? Optional check.
-        if (assignment.IsCodeAssignment != dto.IsCodeAssignment && await _context.TestCases.AnyAsync(tc => tc.AssignmentId == assignmentId)) {
-             return BadRequest(new { message = "Cannot change the assignment type (code/non-code) when test cases already exist." });
+        if (assignment.IsCodeAssignment != dto.IsCodeAssignment && await _context.TestCases.AnyAsync(tc => tc.AssignmentId == assignmentId))
+        {
+            return BadRequest(new { message = "Cannot change the assignment type (code/non-code) when test cases already exist." });
         }
 
         // Update fields
@@ -307,7 +309,8 @@ public class AssignmentsController : ControllerBase
         await _context.SaveChangesAsync();
 
         // Return updated details (similar to GetAssignmentDetails)
-        var responseDto = new AssignmentDetailsDto {
+        var responseDto = new AssignmentDetailsDto
+        {
             Id = assignment.Id,
             Title = assignment.Title,
             Instructions = assignment.Instructions,
@@ -348,8 +351,8 @@ public class AssignmentsController : ControllerBase
         // Auth Check: User must be Owner/Teacher in the classroom or original creator
         if (!await CanUserManageAssignment(currentUserId, assignmentId))
         {
-             _logger.LogWarning("User {UserId} forbidden from deleting assignment {AssignmentId}.", currentUserId, assignmentId);
-             return Forbid();
+            _logger.LogWarning("User {UserId} forbidden from deleting assignment {AssignmentId}.", currentUserId, assignmentId);
+            return Forbid();
         }
 
         // Handle file deletion from storage before deleting DB records
@@ -359,19 +362,21 @@ public class AssignmentsController : ControllerBase
 
         // --- Delete Associated Test Case Files ---
         _logger.LogInformation("Starting test case file cleanup for assignment {AssignmentId} deletion.", assignmentId);
-        if(assignment.TestCases.Any())
+        if (assignment.TestCases.Any())
         {
-            foreach(var testCase in assignment.TestCases)
+            foreach (var testCase in assignment.TestCases)
             {
-                 try { await _fileService.DeleteTestCaseFileAsync(testCase.InputFilePath, testCase.InputStoredFileName); }
-                 catch(Exception ex) { _logger.LogError(ex, "Error deleting test case input file {FileName} during assignment {AssignmentId} deletion.", testCase.InputFileName, assignmentId); }
+                try { await _fileService.DeleteTestCaseFileAsync(testCase.InputFilePath, testCase.InputStoredFileName); }
+                catch (Exception ex) { _logger.LogError(ex, "Error deleting test case input file {FileName} during assignment {AssignmentId} deletion.", testCase.InputFileName, assignmentId); }
 
-                 try { await _fileService.DeleteTestCaseFileAsync(testCase.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName); }
-                 catch(Exception ex) { _logger.LogError(ex, "Error deleting test case output file {FileName} during assignment {AssignmentId} deletion.", testCase.ExpectedOutputFileName, assignmentId); }
+                try { await _fileService.DeleteTestCaseFileAsync(testCase.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName); }
+                catch (Exception ex) { _logger.LogError(ex, "Error deleting test case output file {FileName} during assignment {AssignmentId} deletion.", testCase.ExpectedOutputFileName, assignmentId); }
             }
-             _logger.LogInformation("Finished test case file cleanup attempt for assignment {AssignmentId}.", assignmentId);
-        } else {
-             _logger.LogInformation("No test case files to cleanup for assignment {AssignmentId}.", assignmentId);
+            _logger.LogInformation("Finished test case file cleanup attempt for assignment {AssignmentId}.", assignmentId);
+        }
+        else
+        {
+            _logger.LogInformation("No test case files to cleanup for assignment {AssignmentId}.", assignmentId);
         }
 
         // 1. Query for all files associated with this assignment's submissions
@@ -396,8 +401,8 @@ public class AssignmentsController : ControllerBase
                     if (!deleted)
                     {
                         // Log if the service indicated the file didn't exist or failed, but continue
-                         _logger.LogWarning("Failed to delete or file not found in storage: Path='{FilePath}', Name='{StoredFileName}' during assignment {AssignmentId} deletion.",
-                            fileInfo.FilePath, fileInfo.StoredFileName, assignmentId);
+                        _logger.LogWarning("Failed to delete or file not found in storage: Path='{FilePath}', Name='{StoredFileName}' during assignment {AssignmentId} deletion.",
+                           fileInfo.FilePath, fileInfo.StoredFileName, assignmentId);
                         // Optionally set allFilesDeletedSuccessfully = false here if you want to return a different status later
                     }
                 }
@@ -412,7 +417,7 @@ public class AssignmentsController : ControllerBase
 
             if (!allFilesDeletedSuccessfully)
             {
-                 _logger.LogWarning("One or more files failed to delete during cleanup for assignment {AssignmentId}. Database record will still be removed.", assignmentId);
+                _logger.LogWarning("One or more files failed to delete during cleanup for assignment {AssignmentId}. Database record will still be removed.", assignmentId);
                 // Optionally, you could return a specific status code like 400 Bad Request or 500 Internal Server Error here
                 // if you want the API call to reflect the partial failure. Example:
                 // return BadRequest(new { message = "Assignment deleted, but failed to clean up one or more associated files." });
@@ -420,7 +425,7 @@ public class AssignmentsController : ControllerBase
             }
             else
             {
-                 _logger.LogInformation("Successfully processed physical file cleanup for assignment {AssignmentId}.", assignmentId);
+                _logger.LogInformation("Successfully processed physical file cleanup for assignment {AssignmentId}.", assignmentId);
             }
         }
         else
@@ -463,13 +468,13 @@ public class AssignmentsController : ControllerBase
     public async Task<IActionResult> AddTestCase(int assignmentId, [FromForm] AddTestCaseDto dto)
     {
         // Manual validation if needed for cross-property rules
-         var validationResult = dto.ValidateFilenames(new ValidationContext(dto));
-         if (validationResult != ValidationResult.Success)
-         {
-             // Add validation error to model state or return BadRequest directly
-             ModelState.AddModelError(validationResult?.MemberNames.FirstOrDefault() ?? string.Empty, validationResult!.ErrorMessage!);
-             return BadRequest(ModelState);
-         }
+        var validationResult = dto.ValidateFilenames(new ValidationContext(dto));
+        if (validationResult != ValidationResult.Success)
+        {
+            // Add validation error to model state or return BadRequest directly
+            ModelState.AddModelError(validationResult?.MemberNames.FirstOrDefault() ?? string.Empty, validationResult!.ErrorMessage!);
+            return BadRequest(ModelState);
+        }
 
         int currentUserId;
         try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
@@ -477,7 +482,7 @@ public class AssignmentsController : ControllerBase
         // Auth Check: User must be Owner/Teacher and Assignment must be Code Assignment
         if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId))
         {
-             return Forbid(); // Handles non-existent, not code assignment, or wrong user role
+            return Forbid(); // Handles non-existent, not code assignment, or wrong user role
         }
 
         // Determine effective filenames
@@ -500,7 +505,7 @@ public class AssignmentsController : ControllerBase
             {
                 (inputStoredName, inputPath) = await _fileService.CreateEmptyFileAsync(assignmentId, inputFileName); // Use determined name
             }
-             inputSaved = true; // Mark input as potentially needing cleanup
+            inputSaved = true; // Mark input as potentially needing cleanup
 
             // Save or Create Output File
             if (dto.OutputFile != null && dto.OutputFile.Length > 0)
@@ -538,11 +543,11 @@ public class AssignmentsController : ControllerBase
         }
         catch (Exception ex)
         {
-             _logger.LogError(ex, "Error adding test case for assignment {AssignmentId}", assignmentId);
-             // Cleanup potentially saved files
-             if (inputSaved) await _fileService.DeleteTestCaseFileAsync(inputPath, inputStoredName);
-             // Output file would only be saved if input succeeded
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred while adding the test case." });
+            _logger.LogError(ex, "Error adding test case for assignment {AssignmentId}", assignmentId);
+            // Cleanup potentially saved files
+            if (inputSaved) await _fileService.DeleteTestCaseFileAsync(inputPath, inputStoredName);
+            // Output file would only be saved if input succeeded
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred while adding the test case." });
         }
     }
 
@@ -557,27 +562,27 @@ public class AssignmentsController : ControllerBase
         try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
 
         // Auth Check: Must be Owner/Teacher and IsCodeAssignment
-         if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId))
-         {
-             // Need to differentiate between forbidden and assignment not found/not code assignment
-             var assignmentExists = await _context.Assignments.AnyAsync(a => a.Id == assignmentId);
-             if (!assignmentExists) return NotFound(new { message = "Assignment not found." });
-             return Forbid();
-         }
+        if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId))
+        {
+            // Need to differentiate between forbidden and assignment not found/not code assignment
+            var assignmentExists = await _context.Assignments.AnyAsync(a => a.Id == assignmentId);
+            if (!assignmentExists) return NotFound(new { message = "Assignment not found." });
+            return Forbid();
+        }
 
-         var testCases = await _context.TestCases
-            .Where(tc => tc.AssignmentId == assignmentId)
-            .Include(tc => tc.AddedBy) // Include user for username
-            .OrderBy(tc => tc.AddedAt) // Or by name?
-            .Select(tc => new TestCaseListDto
-            {
-                Id = tc.Id,
-                InputFileName = tc.InputFileName,
-                ExpectedOutputFileName = tc.ExpectedOutputFileName,
-                AddedAt = tc.AddedAt,
-                AddedByUsername = tc.AddedBy.Username ?? "N/A"
-            })
-            .ToListAsync();
+        var testCases = await _context.TestCases
+           .Where(tc => tc.AssignmentId == assignmentId)
+           .Include(tc => tc.AddedBy) // Include user for username
+           .OrderBy(tc => tc.AddedAt) // Or by name?
+           .Select(tc => new TestCaseListDto
+           {
+               Id = tc.Id,
+               InputFileName = tc.InputFileName,
+               ExpectedOutputFileName = tc.ExpectedOutputFileName,
+               AddedAt = tc.AddedAt,
+               AddedByUsername = tc.AddedBy.Username ?? "N/A"
+           })
+           .ToListAsync();
 
         return Ok(testCases);
     }
@@ -585,34 +590,33 @@ public class AssignmentsController : ControllerBase
     // DELETE /api/assignments/{assignmentId}/testcases/{testCaseId} - Delete Test Case Pair
     [HttpDelete("assignments/{assignmentId}/testcases/{testCaseId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-     // ... other response types ...
+    // ... other response types ...
     public async Task<IActionResult> DeleteTestCase(int assignmentId, int testCaseId)
     {
         int currentUserId;
         try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
 
-         // Auth Check: Must be Owner/Teacher and IsCodeAssignment
-         if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId)) return Forbid();
+        // Auth Check: Must be Owner/Teacher and IsCodeAssignment
+        if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId)) return Forbid();
 
-         var testCase = await _context.TestCases.FirstOrDefaultAsync(tc => tc.Id == testCaseId && tc.AssignmentId == assignmentId);
-         if (testCase == null) return NotFound(new { message = "Test case not found or does not belong to this assignment."});
+        var testCase = await _context.TestCases.FirstOrDefaultAsync(tc => tc.Id == testCaseId && tc.AssignmentId == assignmentId);
+        if (testCase == null) return NotFound(new { message = "Test case not found or does not belong to this assignment." });
 
-         // Delete physical files first
-         bool inputDeleted = false;
-         bool outputDeleted = false;
-         try { inputDeleted = await _fileService.DeleteTestCaseFileAsync(testCase.InputFilePath, testCase.InputStoredFileName); }
-         catch(Exception ex) { _logger.LogError(ex, "Error deleting test case input file {FileName}", testCase.InputFileName); }
-         try { outputDeleted = await _fileService.DeleteTestCaseFileAsync(testCase.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName); }
-         catch(Exception ex) { _logger.LogError(ex, "Error deleting test case output file {FileName}", testCase.ExpectedOutputFileName); }
+        // Delete physical files first
+        bool inputDeleted = false;
+        bool outputDeleted = false;
+        inputDeleted = await _fileService.DeleteTestCaseFileAsync(testCase.InputFilePath, testCase.InputStoredFileName);
+        outputDeleted = await _fileService.DeleteTestCaseFileAsync(testCase.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName);
 
-         if(!inputDeleted || !outputDeleted) {
-             _logger.LogWarning("Failed to delete one or both physical files for test case {TestCaseId}. DB record will still be removed.", testCaseId);
-             // Decide if you want to stop here or continue with DB deletion
-         }
+        if (!inputDeleted || !outputDeleted)
+        {
+            _logger.LogWarning("Failed to delete one or both physical files for test case {TestCaseId}. DB record will still be removed.", testCaseId);
+            // Decide if you want to stop here or continue with DB deletion
+        }
 
-         // Delete DB record
-         _context.TestCases.Remove(testCase);
-         await _context.SaveChangesAsync();
+        // Delete DB record
+        _context.TestCases.Remove(testCase);
+        await _context.SaveChangesAsync();
 
         return NoContent();
     }
