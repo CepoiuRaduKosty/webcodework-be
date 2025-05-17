@@ -36,6 +36,16 @@ builder.Services.AddScoped<IPasswordService, PasswordService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IFileStorageService, AzureBlobStorageService>();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient("CodeRunnerClient", client =>
+{
+    var serviceBaseUrl = builder.Configuration.GetValue<string>("CodeRunnerService:BaseUrl");
+    if (!string.IsNullOrEmpty(serviceBaseUrl))
+    {
+        client.BaseAddress = new Uri(serviceBaseUrl);
+    }
+    // Default headers can be set here, but API key is better set per-request
+    // client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+});
 
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var key = Encoding.ASCII.GetBytes(jwtSettings["Key"]
