@@ -38,6 +38,10 @@ namespace WebCodeWork.Models
         [MaxLength(1024)]
         public string ExpectedOutputFilePath { get; set; } = string.Empty; // Relative storage path
 
+        [Required]
+        [Range(0, 1000)] // Example: Points between 0 and 1000. Adjust as needed.
+        public int Points { get; set; }
+
         // Audit Info
         public DateTime AddedAt { get; set; } = DateTime.UtcNow;
 

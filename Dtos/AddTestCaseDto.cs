@@ -17,6 +17,10 @@ namespace WebCodeWork.Dtos
          [MaxLength(255)]
         public string? OutputFileName { get; set; }
 
+        [Required(ErrorMessage = "Points for the test case are required.")]
+        [Range(0, 1000, ErrorMessage = "Points must be between 0 and 1000.")] // Example range
+        public int Points { get; set; }
+
         // Basic validation for filenames if provided without files
          public ValidationResult? ValidateFilenames(ValidationContext context)
          {

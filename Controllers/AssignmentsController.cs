@@ -458,75 +458,70 @@ public class AssignmentsController : ControllerBase
 
     // POST /api/assignments/{assignmentId}/testcases - Add Test Case Pair
     [HttpPost("assignments/{assignmentId}/testcases")]
-    [Consumes("multipart/form-data")] // Specify content type
+    [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(TestCaseDetailDto), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)] // For validation, missing files, wrong assignment type
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> AddTestCase(int assignmentId, [FromForm] AddTestCaseDto dto)
     {
-        // Manual validation if needed for cross-property rules
         var validationResult = dto.ValidateFilenames(new ValidationContext(dto));
-        if (validationResult != ValidationResult.Success)
+        if (validationResult != ValidationResult.Success && validationResult != null) // Added null check for safety
         {
-            // Add validation error to model state or return BadRequest directly
-            ModelState.AddModelError(validationResult?.MemberNames.FirstOrDefault() ?? string.Empty, validationResult!.ErrorMessage!);
+            ModelState.AddModelError(validationResult.MemberNames.FirstOrDefault() ?? string.Empty, validationResult.ErrorMessage!);
             return BadRequest(ModelState);
         }
+        // ModelState will also catch the [Required] and [Range] for Points automatically
 
         int currentUserId;
         try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
 
-        // Auth Check: User must be Owner/Teacher and Assignment must be Code Assignment
         if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId))
         {
-            return Forbid(); // Handles non-existent, not code assignment, or wrong user role
+            _logger.LogWarning("User {UserId} forbidden from adding test cases to assignment {AssignmentId}.", currentUserId, assignmentId);
+            return Forbid();
         }
 
-        // Determine effective filenames
-        string inputFileName = dto.InputFile?.FileName ?? dto.InputFileName!; // Not null due to validation
-        string outputFileName = dto.OutputFile?.FileName ?? dto.OutputFileName!; // Not null due to validation
+        string inputFileName = dto.InputFile?.FileName ?? dto.InputFileName!;
+        string outputFileName = dto.OutputFile?.FileName ?? dto.OutputFileName!;
 
-        // Save files using the service
         string inputStoredName = string.Empty, inputPath = string.Empty;
         string outputStoredName = string.Empty, outputPath = string.Empty;
         bool inputSaved = false;
 
         try
         {
-            // Save or Create Input File
             if (dto.InputFile != null && dto.InputFile.Length > 0)
             {
                 (inputStoredName, inputPath) = await _fileService.SaveTestCaseFileAsync(assignmentId, "input", dto.InputFile);
             }
             else
             {
-                (inputStoredName, inputPath) = await _fileService.CreateEmptyFileAsync(assignmentId, inputFileName); // Use determined name
+                (inputStoredName, inputPath) = await _fileService.CreateEmptyFileAsync(assignmentId, inputFileName);
             }
-            inputSaved = true; // Mark input as potentially needing cleanup
+            inputSaved = true;
 
-            // Save or Create Output File
             if (dto.OutputFile != null && dto.OutputFile.Length > 0)
             {
                 (outputStoredName, outputPath) = await _fileService.SaveTestCaseFileAsync(assignmentId, "output", dto.OutputFile);
             }
             else
             {
-                (outputStoredName, outputPath) = await _fileService.CreateEmptyFileAsync(assignmentId, outputFileName); // Use determined name
+                (outputStoredName, outputPath) = await _fileService.CreateEmptyFileAsync(assignmentId, outputFileName);
             }
 
-            // Create DB record
             var testCase = new TestCase
             {
                 AssignmentId = assignmentId,
-                InputFileName = inputFileName, // Use determined name
+                InputFileName = inputFileName,
                 InputStoredFileName = inputStoredName,
                 InputFilePath = inputPath,
-                ExpectedOutputFileName = outputFileName, // Use determined name
+                ExpectedOutputFileName = outputFileName,
                 ExpectedOutputStoredFileName = outputStoredName,
                 ExpectedOutputFilePath = outputPath,
+                Points = dto.Points, // <<-- Save the points
                 AddedAt = DateTime.UtcNow,
                 AddedById = currentUserId
             };
@@ -534,23 +529,43 @@ public class AssignmentsController : ControllerBase
             _context.TestCases.Add(testCase);
             await _context.SaveChangesAsync();
 
-            // Map to DTO
-            var addedBy = await _context.Users.FindAsync(currentUserId);
-            var responseDto = new TestCaseDetailDto { /* ... map fields ... */ };
+            // --- Map to DTO ---
+            var addedBy = await _context.Users
+                                      .AsNoTracking() // Read-only
+                                      .FirstOrDefaultAsync(u => u.Id == currentUserId);
 
-            // TODO: Add CreatedAtAction pointing to a potential GetTestCaseDetails endpoint
+            var responseDto = new TestCaseDetailDto
+            {
+                Id = testCase.Id,
+                InputFileName = testCase.InputFileName,
+                ExpectedOutputFileName = testCase.ExpectedOutputFileName,
+                Points = testCase.Points, // <<-- Include points in response
+                AddedAt = testCase.AddedAt,
+                AddedByUsername = addedBy?.Username ?? "N/A" // Handle if user somehow not found
+            };
+            // --- End Map to DTO ---
+
+            // --- CreatedAtAction ---
+            // For CreatedAtAction to work, you need a "Get" endpoint for a single test case.
+            // Let's assume it would be in TestCasesController named "GetTestCaseById".
+            // If you don't have it yet, returning StatusCode(201, dto) is fine.
+            // For example:
+            // return CreatedAtAction("GetTestCaseById", "TestCases", new { testCaseId = testCase.Id }, responseDto);
+            // For now, if that endpoint doesn't exist:
             return StatusCode(StatusCodes.Status201Created, responseDto);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error adding test case for assignment {AssignmentId}", assignmentId);
-            // Cleanup potentially saved files
-            if (inputSaved) await _fileService.DeleteTestCaseFileAsync(inputPath, inputStoredName);
-            // Output file would only be saved if input succeeded
+            if (inputSaved && !string.IsNullOrEmpty(inputPath) && !string.IsNullOrEmpty(inputStoredName))
+            {
+                 // Best effort cleanup of already saved input file if subsequent steps fail
+                 await _fileService.DeleteTestCaseFileAsync(inputPath, inputStoredName);
+            }
+            // Note: If output file was saved but DB failed, it won't be cleaned up here. More complex transaction management would be needed.
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred while adding the test case." });
         }
     }
-
 
     // GET /api/assignments/{assignmentId}/testcases - List Test Cases
     [HttpGet("assignments/{assignmentId}/testcases")]
