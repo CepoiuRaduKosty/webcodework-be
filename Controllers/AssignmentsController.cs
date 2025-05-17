@@ -595,7 +595,8 @@ public class AssignmentsController : ControllerBase
                InputFileName = tc.InputFileName,
                ExpectedOutputFileName = tc.ExpectedOutputFileName,
                AddedAt = tc.AddedAt,
-               AddedByUsername = tc.AddedBy.Username ?? "N/A"
+               AddedByUsername = tc.AddedBy.Username ?? "N/A",
+               Points = tc.Points,
            })
            .ToListAsync();
 
