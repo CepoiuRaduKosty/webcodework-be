@@ -42,6 +42,14 @@ namespace WebCodeWork.Models
         [Range(0, 1000)] // Example: Points between 0 and 1000. Adjust as needed.
         public int Points { get; set; }
 
+        [Required]
+        [Range(100, 99999999)] // Example: 100ms to 5 seconds
+        public int MaxExecutionTimeMs { get; set; } = 2000; // Default to 2 seconds
+
+        [Required]
+        [Range(32, 99999999)]  // Example: 32MB to 512MB
+        public int MaxRamMB { get; set; } = 128; // Default to 128 MB
+
         // Audit Info
         public DateTime AddedAt { get; set; } = DateTime.UtcNow;
 

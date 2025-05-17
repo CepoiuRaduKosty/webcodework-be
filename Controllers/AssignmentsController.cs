@@ -474,6 +474,10 @@ public class AssignmentsController : ControllerBase
             return BadRequest(ModelState);
         }
         // ModelState will also catch the [Required] and [Range] for Points automatically
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
 
         int currentUserId;
         try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
@@ -521,7 +525,9 @@ public class AssignmentsController : ControllerBase
                 ExpectedOutputFileName = outputFileName,
                 ExpectedOutputStoredFileName = outputStoredName,
                 ExpectedOutputFilePath = outputPath,
-                Points = dto.Points, // <<-- Save the points
+                Points = dto.Points,
+                MaxExecutionTimeMs = dto.MaxExecutionTimeMs,
+                MaxRamMB = dto.MaxRamMB,
                 AddedAt = DateTime.UtcNow,
                 AddedById = currentUserId
             };
@@ -539,7 +545,9 @@ public class AssignmentsController : ControllerBase
                 Id = testCase.Id,
                 InputFileName = testCase.InputFileName,
                 ExpectedOutputFileName = testCase.ExpectedOutputFileName,
-                Points = testCase.Points, // <<-- Include points in response
+                Points = testCase.Points,
+                MaxExecutionTimeMs = testCase.MaxExecutionTimeMs,
+                MaxRamMB = testCase.MaxRamMB,
                 AddedAt = testCase.AddedAt,
                 AddedByUsername = addedBy?.Username ?? "N/A" // Handle if user somehow not found
             };
@@ -597,6 +605,8 @@ public class AssignmentsController : ControllerBase
                AddedAt = tc.AddedAt,
                AddedByUsername = tc.AddedBy.Username ?? "N/A",
                Points = tc.Points,
+               MaxExecutionTimeMs = tc.MaxExecutionTimeMs,
+               MaxRamMB = tc.MaxRamMB
            })
            .ToListAsync();
 

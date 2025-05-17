@@ -10,7 +10,9 @@ namespace WebCodeWork.Dtos
         public string ExpectedOutputFileName { get; set; } = string.Empty;
         public DateTime AddedAt { get; set; }
         public string AddedByUsername { get; set; } = string.Empty;
-        public int Points { get; set; } // Add Points here too if you want it in the list view
+        public int Points { get; set; } 
+        public int MaxExecutionTimeMs { get; set; } 
+        public int MaxRamMB { get; set; }
     }
 
     // Used as response for POST /api/assignments/{assignmentId}/testcases
@@ -19,7 +21,9 @@ namespace WebCodeWork.Dtos
         public int Id { get; set; }
         public string InputFileName { get; set; } = string.Empty;
         public string ExpectedOutputFileName { get; set; } = string.Empty;
-        public int Points { get; set; } // <<-- Include Points
+        public int Points { get; set; }
+        public int MaxExecutionTimeMs { get; set; } 
+        public int MaxRamMB { get; set; }  
         public DateTime AddedAt { get; set; }
         public string AddedByUsername { get; set; } = string.Empty;
         // Add other details if needed, like file paths (but generally not for client DTOs)
