@@ -49,6 +49,47 @@ namespace YourMainBackend.Controllers
             return userId;
         }
 
+        private async Task<bool> CanUserTriggerEvaluation(int currentUserId, int classroomId, int submissionId)
+        {
+            var userRoleInClassroom = await _context.ClassroomMembers
+                .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == classroomId)
+                .Select(cm => (ClassroomRole?)cm.Role) // Select nullable role
+                .FirstOrDefaultAsync();
+
+            if (userRoleInClassroom == ClassroomRole.Owner || userRoleInClassroom == ClassroomRole.Teacher)
+            {
+                _logger.LogInformation("User {UserId} is an Owner/Teacher in classroom {ClassroomId}, allowed to trigger evaluation for submission {SubmissionId}.",
+                    currentUserId, classroomId, submissionId);
+                return true;
+            }
+            var submissionOwnerId = await _context.AssignmentSubmissions
+                .Where(s => s.Id == submissionId)
+                .Select(s => (int?)s.StudentId)
+                .FirstOrDefaultAsync();
+
+            if (submissionOwnerId.HasValue)
+            {
+                if (submissionOwnerId.Value == currentUserId)
+                {
+                    _logger.LogInformation("User {UserId} is the student owner of submission {SubmissionId}, allowed to trigger evaluation.",
+                        currentUserId, submissionId);
+                    return true;
+                }
+                else
+                {
+                    _logger.LogWarning("User {UserId} is not the owner of submission {SubmissionId} and not a Teacher/Owner in classroom {ClassroomId}. Forbidden.",
+                        currentUserId, submissionId, classroomId);
+                    return false;
+                }
+            }
+            else
+            {
+                _logger.LogWarning("User {UserId} attempted to trigger evaluation for non-existent submission {SubmissionId}.",
+                    currentUserId, submissionId);
+                return false; 
+            }
+        }
+
         /// <summary>
         /// Triggers the evaluation of a student's submission for a code assignment.
         /// </summary>
@@ -81,44 +122,35 @@ namespace YourMainBackend.Controllers
 
             if (submission == null)
             {
-                return NotFound(new ProblemDetails { Title = "Submission Not Found", Detail = $"Submission with ID {submissionId} not found."});
+                return NotFound(new ProblemDetails { Title = "Submission Not Found", Detail = $"Submission with ID {submissionId} not found." });
             }
 
             // 2. Authorization Check: Example - Teacher/Owner of the classroom
             // (Adjust this to your actual authorization logic for triggering evaluations)
             var classroomId = submission.Assignment.ClassroomId;
-            var userRoleInClassroom = await _context.ClassroomMembers
-                .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == classroomId)
-                .Select(cm => (ClassroomRole?)cm.Role)
-                .FirstOrDefaultAsync();
-
-            if (userRoleInClassroom != ClassroomRole.Owner && userRoleInClassroom != ClassroomRole.Teacher)
-            {
-                 _logger.LogWarning("User {UserId} (Role: {Role}) forbidden to trigger evaluation for submission {SubmissionId} in classroom {ClassroomId}",
-                    currentUserId, userRoleInClassroom?.ToString() ?? "None", submissionId, classroomId);
-                return Forbid();
-            }
+            var isAllowedToEvaluate = await CanUserTriggerEvaluation(currentUserId, classroomId, submissionId);
+            if (isAllowedToEvaluate == false) return Forbid();
 
             // 3. Validation
             if (submission.Assignment == null) // Should not happen with Include
             {
                 _logger.LogError("Assignment data missing for submission {SubmissionId}", submissionId);
-                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Assignment data is missing."});
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Assignment data is missing." });
             }
             if (!submission.Assignment.IsCodeAssignment)
             {
-                return BadRequest(new ProblemDetails { Title = "Not a Code Assignment", Detail = "This assignment is not configured for code evaluation."});
+                return BadRequest(new ProblemDetails { Title = "Not a Code Assignment", Detail = "This assignment is not configured for code evaluation." });
             }
 
             var solutionFile = submission.SubmittedFiles.FirstOrDefault(f => f.FileName.Equals("solution.c", StringComparison.OrdinalIgnoreCase));
             if (solutionFile == null)
             {
-                return BadRequest(new ProblemDetails { Title = "Solution File Missing", Detail = "No 'solution.c' file found in this submission."});
+                return BadRequest(new ProblemDetails { Title = "Solution File Missing", Detail = "No 'solution.c' file found in this submission." });
             }
 
             if (submission.Assignment.TestCases == null || !submission.Assignment.TestCases.Any())
             {
-                return BadRequest(new ProblemDetails { Title = "No Test Cases", Detail = "No test cases configured for this assignment."});
+                return BadRequest(new ProblemDetails { Title = "No Test Cases", Detail = "No test cases configured for this assignment." });
             }
 
             // 4. Construct Request for CodeRunnerService
@@ -146,7 +178,7 @@ namespace YourMainBackend.Controllers
             if (string.IsNullOrEmpty(runnerBaseUrl) || string.IsNullOrEmpty(runnerApiKey))
             {
                 _logger.LogCritical("CodeRunnerService URL or API Key not configured in main backend.");
-                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Configuration Error", Detail = "Code runner service is not configured."});
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Configuration Error", Detail = "Code runner service is not configured." });
             }
 
             var httpClient = _httpClientFactory.CreateClient("CodeRunnerClient"); // Use a named client
@@ -164,8 +196,8 @@ namespace YourMainBackend.Controllers
             }
             catch (HttpRequestException httpEx)
             {
-                 _logger.LogError(httpEx, "HTTP request to CodeRunnerService failed for submission {SubmissionId}.", submissionId);
-                 return StatusCode(StatusCodes.Status502BadGateway, new ProblemDetails { Title = "Runner Service Unreachable", Detail = "Could not connect to the code runner service."});
+                _logger.LogError(httpEx, "HTTP request to CodeRunnerService failed for submission {SubmissionId}.", submissionId);
+                return StatusCode(StatusCodes.Status502BadGateway, new ProblemDetails { Title = "Runner Service Unreachable", Detail = "Could not connect to the code runner service." });
             }
 
             // 6. Process Response from CodeRunnerService
@@ -175,7 +207,7 @@ namespace YourMainBackend.Controllers
                 if (runnerResponse == null)
                 {
                     _logger.LogError("Failed to deserialize response from CodeRunnerService for submission {SubmissionId}.", submissionId);
-                     return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Runner Response Error", Detail = "Invalid response from code runner service."});
+                    return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Runner Response Error", Detail = "Invalid response from code runner service." });
                 }
                 _logger.LogInformation("Evaluation completed for submission {SubmissionId}. Overall Status: {OverallStatus}", submissionId, runnerResponse.OverallStatus);
                 return Ok(runnerResponse); // Return the raw response from the runner for now
