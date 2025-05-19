@@ -3,7 +3,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.EntityFrameworkCore;
 using WebCodeWork.Data; // Add this
-using WebCodeWork.Services; // Add this
+using WebCodeWork.Services;
+using WebCodeWork.Hubs; // Add this
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,15 +19,19 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
             errorNumbersToAdd: null)
         ));
 
-// Add services to the container.
-builder.Services.AddControllers(); // Add services for Controllers (for building APIs)
+builder.Services.AddControllers(); 
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+});
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(builder.Configuration.GetValue<string>("FrontendOrigin")!)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -67,12 +72,28 @@ builder.Services.AddAuthentication(options =>
     {
         ValidateIssuer = true,
         ValidateAudience = true,
-        ValidateLifetime = true, 
+        ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
         ValidIssuer = issuer,
         ValidAudience = audience,
         IssuerSigningKey = new SymmetricSecurityKey(key),
-        ClockSkew = TimeSpan.Zero // Optional: Reduces tolerance for time differences
+        ClockSkew = TimeSpan.Zero 
+    };
+    
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) &&
+                (path.StartsWithSegments("/evaluationHub")))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
     };
 });
 
@@ -103,6 +124,12 @@ builder.Services.AddSwaggerGen(options => // Optional: Configure Swagger for JWT
 
 var app = builder.Build();
 
+var webSocketOptions = new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromMinutes(20) // Example keep-alive
+};
+app.UseWebSockets(webSocketOptions); // Call this early in the pipeline
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -120,6 +147,8 @@ app.UseAuthentication();
 
 app.UseAuthorization();
 
-app.MapControllers(); // Map routes for your API controllers
+app.MapControllers(); 
+
+app.MapHub<EvaluationHub>("/evaluationHub");
 
 app.Run();

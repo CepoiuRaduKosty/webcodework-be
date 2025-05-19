@@ -2,20 +2,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration; // For IConfiguration
-using Microsoft.Extensions.Logging;    // For ILogger
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;               // For HttpClient
-using System.Net.Http.Headers;       // For MediaTypeWithQualityHeaderValue
-using System.Net.Http.Json;          // For PostAsJsonAsync, ReadFromJsonAsync
+using System.Net.Http.Headers;
 using System.Security.Claims;
-using System.Threading.Tasks;
-using WebCodeWork.Data;      // Your DbContext (e.g., ApplicationDbContext)
-using WebCodeWork.Models;    // Your Models (AssignmentSubmission, Assignment, TestCase, SubmittedFile)
-using WebCodeWork.Enums;     // Your Enums (ClassroomRole)
-using WebCodeWork.Dtos;      // The CodeRunnerDtos defined above
+using WebCodeWork.Data;
+using WebCodeWork.Enums;
+using WebCodeWork.Dtos;
+using Microsoft.AspNetCore.SignalR;
+using WebCodeWork.Hubs;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace YourMainBackend.Controllers
 {
@@ -28,17 +22,23 @@ namespace YourMainBackend.Controllers
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _configuration;
         private readonly ILogger<SubmissionEvaluationsController> _logger;
+        private readonly IHubContext<EvaluationHub> _evaluationHubContext;
+        private readonly IServiceScopeFactory _serviceScopeFactory;
 
         public SubmissionEvaluationsController(
             ApplicationDbContext context,
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
-            ILogger<SubmissionEvaluationsController> logger)
+            ILogger<SubmissionEvaluationsController> logger,
+            IHubContext<EvaluationHub> evaluationHubContext,
+            IServiceScopeFactory serviceScopeFactory)
         {
             _context = context;
             _httpClientFactory = httpClientFactory;
             _configuration = configuration;
             _logger = logger;
+            _evaluationHubContext = evaluationHubContext;
+            _serviceScopeFactory = serviceScopeFactory;
         }
 
         private int GetCurrentUserId()
@@ -47,6 +47,14 @@ namespace YourMainBackend.Controllers
             if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
                 throw new UnauthorizedAccessException("User ID not found or invalid in token.");
             return userId;
+        }
+
+        private string GetCurrentUserIdStringThrows()
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdClaim))
+                throw new UnauthorizedAccessException("User ID (string) not found in token.");
+            return userIdClaim;
         }
 
         private async Task<bool> CanUserTriggerEvaluation(int currentUserId, int classroomId, int submissionId)
@@ -86,38 +94,37 @@ namespace YourMainBackend.Controllers
             {
                 _logger.LogWarning("User {UserId} attempted to trigger evaluation for non-existent submission {SubmissionId}.",
                     currentUserId, submissionId);
-                return false; 
+                return false;
             }
         }
 
-        /// <summary>
-        /// Triggers the evaluation of a student's submission for a code assignment.
-        /// </summary>
-        /// <param name="submissionId">The ID of the AssignmentSubmission to evaluate.</param>
-        /// <returns>The evaluation results from the CodeRunnerService.</returns>
+
         [HttpPost("{submissionId}/trigger")]
-        [ProducesResponseType(typeof(CodeRunnerEvaluateResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status202Accepted)]
         [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(void), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(void), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> TriggerEvaluation(int submissionId)
         {
             int currentUserId;
-            try { currentUserId = GetCurrentUserId(); }
+            string currentUserIdString;
+            try
+            {
+                currentUserId = GetCurrentUserId();
+                currentUserIdString = GetCurrentUserIdStringThrows();
+            }
             catch (UnauthorizedAccessException) { return Unauthorized(); }
 
             _logger.LogInformation("User {UserId} triggering evaluation for submission {SubmissionId}", currentUserId, submissionId);
 
-            // 1. Fetch Submission and related data
             var submission = await _context.AssignmentSubmissions
-                .Include(s => s.Student) // For student info, if needed for auth later
-                .Include(s => s.SubmittedFiles) // To find solution.c
+                .Include(s => s.Student)
+                .Include(s => s.SubmittedFiles)
                 .Include(s => s.Assignment)
-                    .ThenInclude(a => a!.Classroom) // For classroom ID for auth
+                    .ThenInclude(a => a!.Classroom)
                 .Include(s => s.Assignment)
-                    .ThenInclude(a => a!.TestCases) // To get all test cases
+                    .ThenInclude(a => a!.TestCases)
                 .FirstOrDefaultAsync(s => s.Id == submissionId);
 
             if (submission == null)
@@ -125,13 +132,8 @@ namespace YourMainBackend.Controllers
                 return NotFound(new ProblemDetails { Title = "Submission Not Found", Detail = $"Submission with ID {submissionId} not found." });
             }
 
-            // 2. Authorization Check: Example - Teacher/Owner of the classroom
-            // (Adjust this to your actual authorization logic for triggering evaluations)
-            var classroomId = submission.Assignment.ClassroomId;
-            var isAllowedToEvaluate = await CanUserTriggerEvaluation(currentUserId, classroomId, submissionId);
-            if (isAllowedToEvaluate == false) return Forbid();
+            if (!await CanUserTriggerEvaluation(currentUserId, submission.Assignment.ClassroomId, submissionId)) return Forbid();
 
-            // 3. Validation
             if (submission.Assignment == null) // Should not happen with Include
             {
                 _logger.LogError("Assignment data missing for submission {SubmissionId}", submissionId);
@@ -153,72 +155,93 @@ namespace YourMainBackend.Controllers
                 return BadRequest(new ProblemDetails { Title = "No Test Cases", Detail = "No test cases configured for this assignment." });
             }
 
-            // 4. Construct Request for CodeRunnerService
-            // Paths must be the full paths in Azure Blob Storage, as expected by the runner.
-            // Example assumes FilePath is the directory and StoredFileName is the actual blob name.
-            var codeRunnerRequest = new CodeRunnerEvaluateRequest
+            _ = Task.Run(async () =>
             {
-                Language = "c", // Fixed for now
-                Version = "latest", // Or determine from assignment if needed
-                CodeFilePath = Path.Combine(solutionFile.FilePath, solutionFile.StoredFileName).Replace("\\", "/"),
-                TestCases = submission.Assignment.TestCases.Select(tc => new CodeRunnerTestCaseInfo
+                using (var scope = _serviceScopeFactory.CreateScope())
                 {
-                    InputFilePath = Path.Combine(tc.InputFilePath, tc.InputStoredFileName).Replace("\\", "/"),
-                    ExpectedOutputFilePath = Path.Combine(tc.ExpectedOutputFilePath, tc.ExpectedOutputStoredFileName).Replace("\\", "/"),
-                    MaxExecutionTimeMs = tc.MaxExecutionTimeMs,
-                    MaxRamMB = tc.MaxRamMB,
-                    TestCaseId = tc.Id.ToString() // Pass TestCase DB ID for correlation
-                }).ToList()
-            };
+                    var scopedContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    var scopedHttpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
+                    var scopedConfiguration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+                    var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<SubmissionEvaluationsController>>();
 
-            // 5. Call CodeRunnerService
-            var runnerBaseUrl = _configuration.GetValue<string>("CodeRunnerService:BaseUrl");
-            var runnerApiKey = _configuration.GetValue<string>("CodeRunnerService:ApiKey");
+                    scopedLogger.LogInformation("[Background] Starting actual evaluation for User {UserId}, Submission {SubmissionId}", currentUserIdString, submissionId);
 
-            if (string.IsNullOrEmpty(runnerBaseUrl) || string.IsNullOrEmpty(runnerApiKey))
-            {
-                _logger.LogCritical("CodeRunnerService URL or API Key not configured in main backend.");
-                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Configuration Error", Detail = "Code runner service is not configured." });
-            }
+                    var codeRunnerRequest = new CodeRunnerEvaluateRequest
+                    {
+                        Language = "c",
+                        Version = "latest",
+                        CodeFilePath = Path.Combine(solutionFile.FilePath, solutionFile.StoredFileName).Replace("\\", "/"),
+                        TestCases = submission.Assignment.TestCases.Select(tc => new CodeRunnerTestCaseInfo
+                        {
+                            InputFilePath = Path.Combine(tc.InputFilePath, tc.InputStoredFileName).Replace("\\", "/"),
+                            ExpectedOutputFilePath = Path.Combine(tc.ExpectedOutputFilePath, tc.ExpectedOutputStoredFileName).Replace("\\", "/"),
+                            MaxExecutionTimeMs = tc.MaxExecutionTimeMs,
+                            MaxRamMB = tc.MaxRamMB,
+                            TestCaseId = tc.Id.ToString()
+                        }).ToList()
+                    };
 
-            var httpClient = _httpClientFactory.CreateClient("CodeRunnerClient"); // Use a named client
-            httpClient.BaseAddress = new Uri(runnerBaseUrl);
-            httpClient.DefaultRequestHeaders.Clear(); // Clear any defaults if reusing client
-            httpClient.DefaultRequestHeaders.Add("X-Api-Key", runnerApiKey);
-            httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                    var runnerBaseUrl = scopedConfiguration.GetValue<string>("CodeRunnerService:BaseUrl");
+                    var runnerApiKey = scopedConfiguration.GetValue<string>("CodeRunnerService:ApiKey");
+                    CodeRunnerEvaluateResponse? finalRunnerResponse = null;
 
-            _logger.LogInformation("Calling CodeRunnerService for submission {SubmissionId}...", submissionId);
-            HttpResponseMessage runnerHttpResponse;
-            try
-            {
-                // The CodeRunnerService orchestrator's endpoint is POST /api/evaluate/orchestrate
-                runnerHttpResponse = await httpClient.PostAsJsonAsync("/api/evaluate/orchestrate", codeRunnerRequest);
-            }
-            catch (HttpRequestException httpEx)
-            {
-                _logger.LogError(httpEx, "HTTP request to CodeRunnerService failed for submission {SubmissionId}.", submissionId);
-                return StatusCode(StatusCodes.Status502BadGateway, new ProblemDetails { Title = "Runner Service Unreachable", Detail = "Could not connect to the code runner service." });
-            }
+                    if (string.IsNullOrEmpty(runnerBaseUrl) || string.IsNullOrEmpty(runnerApiKey))
+                    {
+                        scopedLogger.LogCritical("[Background] CodeRunnerService URL or API Key not configured for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
+                        finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "ConfigurationError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() }; 
+                    }
+                    else
+                    {
+                        var httpClient = scopedHttpClientFactory.CreateClient("CodeRunnerClient");
+                        httpClient.BaseAddress = new Uri(runnerBaseUrl);
+                        httpClient.DefaultRequestHeaders.Clear();
+                        httpClient.DefaultRequestHeaders.Add("X-Api-Key", runnerApiKey);
+                        httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                        httpClient.Timeout = TimeSpan.FromMinutes(20);
 
-            // 6. Process Response from CodeRunnerService
-            if (runnerHttpResponse.IsSuccessStatusCode)
-            {
-                var runnerResponse = await runnerHttpResponse.Content.ReadFromJsonAsync<CodeRunnerEvaluateResponse>();
-                if (runnerResponse == null)
-                {
-                    _logger.LogError("Failed to deserialize response from CodeRunnerService for submission {SubmissionId}.", submissionId);
-                    return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Runner Response Error", Detail = "Invalid response from code runner service." });
+                        try
+                        {
+                            HttpResponseMessage runnerHttpResponse = await httpClient.PostAsJsonAsync("/api/evaluate/orchestrate", codeRunnerRequest);
+                            if (runnerHttpResponse.IsSuccessStatusCode)
+                            {
+                                finalRunnerResponse = await runnerHttpResponse.Content.ReadFromJsonAsync<CodeRunnerEvaluateResponse>();
+                            }
+                            else
+                            {
+                                var errorContent = await runnerHttpResponse.Content.ReadAsStringAsync();
+                                scopedLogger.LogError("[Background] CodeRunnerService returned error for User {UserId}, Submission {SubmissionId}. Status: {StatusCode}. Body: {ErrorBody}",
+                                    currentUserIdString, submissionId, runnerHttpResponse.StatusCode, errorContent);
+                                finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = $"RunnerError: {runnerHttpResponse.StatusCode}", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() }; 
+                            }
+                        }
+                        catch (TaskCanceledException tex) when (tex.InnerException is TimeoutException) // HttpClient timeout
+                        {
+                            scopedLogger.LogError(tex, "[Background] HttpClient request to CodeRunnerService timed out for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
+                            finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerTimeout", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                        }
+                        catch (HttpRequestException httpEx)
+                        {
+                            scopedLogger.LogError(httpEx, "[Background] HTTP request to CodeRunnerService failed for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
+                            finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerUnreachable", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                        }
+                        catch (Exception ex)
+                        {
+                            scopedLogger.LogError(ex, "[Background] Unexpected error during CodeRunnerService call for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
+                            finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "OrchestratorError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                        }
+                    }
+
+                    if (finalRunnerResponse != null)
+                    {
+                        scopedLogger.LogInformation("[Background] Sending evaluation result via SignalR to User {UserId} for Submission {SubmissionId}.", currentUserIdString, submissionId);
+                        await _evaluationHubContext.Clients.User(currentUserIdString).SendAsync("ReceiveEvaluationResult", finalRunnerResponse, submissionId);
+                    }
                 }
-                _logger.LogInformation("Evaluation completed for submission {SubmissionId}. Overall Status: {OverallStatus}", submissionId, runnerResponse.OverallStatus);
-                return Ok(runnerResponse); // Return the raw response from the runner for now
-            }
-            else
-            {
-                var errorContent = await runnerHttpResponse.Content.ReadAsStringAsync();
-                _logger.LogError("CodeRunnerService returned error for submission {SubmissionId}. Status: {StatusCode}. Body: {ErrorBody}",
-                    submissionId, runnerHttpResponse.StatusCode, errorContent);
-                return StatusCode((int)runnerHttpResponse.StatusCode, new ProblemDetails { Title = "Runner Service Error", Detail = $"Code runner service failed: {errorContent}" });
-            }
+            });
+
+            // Return an immediate response to the client
+            _logger.LogInformation("Evaluation process for submission {SubmissionId} started in background for User {UserId}.", submissionId, currentUserId);
+            return Accepted(new { message = "Evaluation process started. You will be notified when results are ready.", submissionId = submissionId });
         }
     }
 }
