@@ -10,6 +10,7 @@ using WebCodeWork.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using WebCodeWork.Hubs;
 using Microsoft.Extensions.DependencyInjection;
+using System.ComponentModel.DataAnnotations;
 
 namespace YourMainBackend.Controllers
 {
@@ -40,6 +41,11 @@ namespace YourMainBackend.Controllers
             _evaluationHubContext = evaluationHubContext;
             _serviceScopeFactory = serviceScopeFactory;
         }
+
+        private static readonly HashSet<string> SupportedLanguages = new HashSet<string>
+        {
+            "c", "java", "rust", "go", "python"
+        };
 
         private int GetCurrentUserId()
         {
@@ -105,7 +111,7 @@ namespace YourMainBackend.Controllers
         [ProducesResponseType(typeof(void), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(void), StatusCodes.Status403Forbidden)]
         [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> TriggerEvaluation(int submissionId)
+        public async Task<IActionResult> TriggerEvaluation(int submissionId, [FromQuery, Required] string language)
         {
             int currentUserId;
             string currentUserIdString;
@@ -115,6 +121,12 @@ namespace YourMainBackend.Controllers
                 currentUserIdString = GetCurrentUserIdStringThrows();
             }
             catch (UnauthorizedAccessException) { return Unauthorized(); }
+
+            var normalizedLanguage = language.ToLowerInvariant();
+            if (!SupportedLanguages.Contains(normalizedLanguage))
+            {
+                return BadRequest(new ProblemDetails { Title = "Unsupported Language", Detail = $"The language '{language}' is not supported for evaluation." });
+            }
 
             _logger.LogInformation("User {UserId} triggering evaluation for submission {SubmissionId}", currentUserId, submissionId);
 
@@ -144,10 +156,10 @@ namespace YourMainBackend.Controllers
                 return BadRequest(new ProblemDetails { Title = "Not a Code Assignment", Detail = "This assignment is not configured for code evaluation." });
             }
 
-            var solutionFile = submission.SubmittedFiles.FirstOrDefault(f => f.FileName.Equals("solution.c", StringComparison.OrdinalIgnoreCase));
+            var solutionFile = submission.SubmittedFiles.FirstOrDefault(f => f.FileName.Equals("solution", StringComparison.OrdinalIgnoreCase));
             if (solutionFile == null)
             {
-                return BadRequest(new ProblemDetails { Title = "Solution File Missing", Detail = "No 'solution.c' file found in this submission." });
+                return BadRequest(new ProblemDetails { Title = "Solution File Missing", Detail = "No 'solution' file found in this submission." });
             }
 
             if (submission.Assignment.TestCases == null || !submission.Assignment.TestCases.Any())
@@ -168,7 +180,7 @@ namespace YourMainBackend.Controllers
 
                     var codeRunnerRequest = new CodeRunnerEvaluateRequest
                     {
-                        Language = "c",
+                        Language = normalizedLanguage,
                         Version = "latest",
                         CodeFilePath = Path.Combine(solutionFile.FilePath, solutionFile.StoredFileName).Replace("\\", "/"),
                         TestCases = submission.Assignment.TestCases.Select(tc => new CodeRunnerTestCaseInfo
@@ -188,7 +200,7 @@ namespace YourMainBackend.Controllers
                     if (string.IsNullOrEmpty(runnerBaseUrl) || string.IsNullOrEmpty(runnerApiKey))
                     {
                         scopedLogger.LogCritical("[Background] CodeRunnerService URL or API Key not configured for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
-                        finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "ConfigurationError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() }; 
+                        finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "ConfigurationError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                     }
                     else
                     {
@@ -211,7 +223,7 @@ namespace YourMainBackend.Controllers
                                 var errorContent = await runnerHttpResponse.Content.ReadAsStringAsync();
                                 scopedLogger.LogError("[Background] CodeRunnerService returned error for User {UserId}, Submission {SubmissionId}. Status: {StatusCode}. Body: {ErrorBody}",
                                     currentUserIdString, submissionId, runnerHttpResponse.StatusCode, errorContent);
-                                finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = $"RunnerError: {runnerHttpResponse.StatusCode}", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() }; 
+                                finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = $"RunnerError: {runnerHttpResponse.StatusCode}", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                             }
                         }
                         catch (TaskCanceledException tex) when (tex.InnerException is TimeoutException) // HttpClient timeout
@@ -243,5 +255,6 @@ namespace YourMainBackend.Controllers
             _logger.LogInformation("Evaluation process for submission {SubmissionId} started in background for User {UserId}.", submissionId, currentUserId);
             return Accepted(new { message = "Evaluation process started. You will be notified when results are ready.", submissionId = submissionId });
         }
+
     }
 }
