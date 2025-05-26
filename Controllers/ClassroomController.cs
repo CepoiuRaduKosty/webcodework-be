@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims; // Required for User.FindFirstValue
 using WebCodeWork.Data;
 using WebCodeWork.Dtos;
@@ -615,7 +616,7 @@ namespace WebCodeWork.Controllers
 
             return NoContent();
         }
-        
+
         [HttpPut("{classroomId}")]
         [ProducesResponseType(typeof(ClassroomDto), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
@@ -654,7 +655,7 @@ namespace WebCodeWork.Controllers
             {
                 _logger.LogWarning("User {UserId} (Role: {UserRole}) forbidden from updating classroom {ClassroomId}.",
                     currentUserId, userRole?.ToString() ?? "N/A", classroomId);
-                return Forbid(); 
+                return Forbid();
             }
 
             classroom.Name = updateDto.Name;
@@ -679,14 +680,69 @@ namespace WebCodeWork.Controllers
             }
             catch (DbUpdateConcurrencyException ex)
             {
-                 _logger.LogError(ex, "Concurrency error while updating classroom {ClassroomId}.", classroomId);
-                 return Conflict(new ProblemDetails { Title = "Conflict", Detail = "The classroom was modified by another user. Please refresh and try again."});
+                _logger.LogError(ex, "Concurrency error while updating classroom {ClassroomId}.", classroomId);
+                return Conflict(new ProblemDetails { Title = "Conflict", Detail = "The classroom was modified by another user. Please refresh and try again." });
             }
             catch (DbUpdateException ex)
             {
                 _logger.LogError(ex, "Database error while updating classroom {ClassroomId}.", classroomId);
                 return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not update classroom details." });
             }
+        }
+        
+        [HttpGet("{classroomId}/potential-members/search")]
+        [ProducesResponseType(typeof(IEnumerable<UserSearchResultDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> SearchPotentialMembers(
+            int classroomId,
+            [FromQuery, Required(ErrorMessage = "Search term is required.")]
+            string searchTerm,
+            [FromQuery, Range(1, 20)] int limit = 5)
+        {
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException) { return Unauthorized(); }
+
+            _logger.LogInformation("User {UserId} searching for potential members in classroom {ClassroomId} with term '{SearchTerm}'", currentUserId, classroomId, searchTerm);
+
+            var classroom = await _context.Classrooms.FindAsync(classroomId);
+            if (classroom == null)
+            {
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = $"Classroom with ID {classroomId} not found." });
+            }
+
+            // Authorization: Only Owner or Teacher of the classroom can search for potential members
+            var userRole = await GetUserRoleInClassroom(currentUserId, classroomId);
+            if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
+            {
+                _logger.LogWarning("User {UserId} (Role: {UserRole}) forbidden from searching members for classroom {ClassroomId}.",
+                    currentUserId, userRole?.ToString() ?? "N/A", classroomId);
+                return Forbid();
+            }
+
+            var existingMemberIds = await _context.ClassroomMembers
+                .Where(cm => cm.ClassroomId == classroomId)
+                .Select(cm => cm.UserId)
+                .Distinct() 
+                .ToListAsync();
+
+            var potentialMembers = await _context.Users
+                .Where(u => u.Username.ToLower().Contains(searchTerm.ToLower()))
+                .Where(u => !existingMemberIds.Contains(u.Id)) 
+                .OrderBy(u => u.Username) 
+                .Take(limit)            
+                .Select(u => new UserSearchResultDto
+                {
+                    UserId = u.Id,
+                    Username = u.Username,
+                    ProfilePhotoUrl = _fileService.GetPublicUserProfilePhotoUrl(u.ProfilePhotoPath!, u.ProfilePhotoStoredName!) 
+                })
+                .ToListAsync();
+
+            return Ok(potentialMembers);
         }
     }
 }
