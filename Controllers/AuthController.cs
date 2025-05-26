@@ -4,11 +4,13 @@ using WebCodeWork.Data;
 using WebCodeWork.Dtos;
 using WebCodeWork.Models;
 using WebCodeWork.Services;
-using System.Text.RegularExpressions; 
+using System.Text.RegularExpressions;
 using System.Linq;
 using PwnedPasswords.Client;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace YourProjectName.Controllers
 {
@@ -68,7 +70,7 @@ namespace YourProjectName.Controllers
             {
                 errors.Add("Password should not contain your username.");
             }
-            
+
             try
             {
                 var pwned = await _pwnedPasswordsClient.HasPasswordBeenPwned(password);
@@ -84,6 +86,16 @@ namespace YourProjectName.Controllers
             }
 
             return errors;
+        }
+
+        private int GetCurrentUserId()
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+            {
+                throw new UnauthorizedAccessException("User ID not found or invalid in token.");
+            }
+            return userId;
         }
 
         [HttpPost("register")]
@@ -125,11 +137,11 @@ namespace YourProjectName.Controllers
             }
             catch (DbUpdateException ex) // Catch specific EF Core exceptions
             {
-                 _logger.LogError(ex, "Error saving user registration to database.");
+                _logger.LogError(ex, "Error saving user registration to database.");
                 // Check inner exception for details, e.g., duplicate key violation
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred during registration. Please try again." });
             }
-             catch (Exception ex) // Catch broader exceptions
+            catch (Exception ex) // Catch broader exceptions
             {
                 _logger.LogError(ex, "An unexpected error occurred during registration.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An unexpected error occurred." });
@@ -164,6 +176,119 @@ namespace YourProjectName.Controllers
                 Username = user.Username,
                 Expiration = expiration
             });
+        }
+
+        [HttpPut("account/username")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> ChangeUsername([FromBody] ChangeUsernameDto changeUsernameDto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationProblem(ModelState);
+            }
+
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException) { return Unauthorized(); }
+
+            var user = await _context.Users.FindAsync(currentUserId);
+            if (user == null)
+            {
+                return NotFound(new ProblemDetails { Title = "User not found." });
+            }
+
+            if (user.Username.Equals(changeUsernameDto.NewUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                ModelState.AddModelError(nameof(changeUsernameDto.NewUsername), "New username cannot be the same as the current username.");
+                return ValidationProblem(ModelState);
+            }
+
+            var existingUserWithNewName = await _context.Users
+                .FirstOrDefaultAsync(u => u.Id != currentUserId && u.Username == changeUsernameDto.NewUsername);
+            if (existingUserWithNewName != null)
+            {
+                ModelState.AddModelError(nameof(changeUsernameDto.NewUsername), "This username is already taken.");
+                return ValidationProblem(ModelState);
+            }
+
+            user.Username = changeUsernameDto.NewUsername;
+            _context.Users.Update(user);
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("User {UserId} successfully changed username to {NewUsername}", currentUserId, changeUsernameDto.NewUsername);
+                return NoContent(); 
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Database error changing username for User {UserId}", currentUserId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not update username." });
+            }
+        }
+
+        [HttpPut("account/password")] 
+        [Authorize] 
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDto changePasswordDto)
+        {
+            if (!ModelState.IsValid) 
+            {
+                return ValidationProblem(ModelState);
+            }
+
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException) { return Unauthorized(); }
+
+            var user = await _context.Users.FindAsync(currentUserId);
+            if (user == null)
+            {
+                return NotFound(new ProblemDetails { Title = "User not found." });
+            }
+
+            if (!_passwordService.VerifyPassword(changePasswordDto.CurrentPassword, user.PasswordHash))
+            {
+                ModelState.AddModelError(nameof(changePasswordDto.CurrentPassword), "Incorrect current password.");
+                return ValidationProblem(ModelState);
+            }
+
+            if (_passwordService.VerifyPassword(changePasswordDto.NewPassword, user.PasswordHash))
+            {
+                ModelState.AddModelError(nameof(changePasswordDto.NewPassword), "New password cannot be the same as the current password.");
+                return ValidationProblem(ModelState);
+            }
+
+            var passwordValidationErrors = await ValidatePassword(changePasswordDto.NewPassword, user.Username);
+
+            if (passwordValidationErrors.Any())
+            {
+                return BadRequest(new { message = passwordValidationErrors[0] });
+            }
+
+            user.PasswordHash = _passwordService.HashPassword(changePasswordDto.NewPassword);
+            _context.Users.Update(user);
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("User {UserId} successfully changed their password.", currentUserId);
+                return NoContent();
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Database error changing password for User {UserId}", currentUserId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not update password." });
+            }
         }
     }
 }
