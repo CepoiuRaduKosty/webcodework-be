@@ -9,5 +9,6 @@ namespace WebCodeWork.Dtos
         public int ClassroomId { get; set; }
         public ClassroomRole Role { get; set; }
         public DateTime JoinedAt { get; set; }
+        public string? ProfilePhotoUrl { get; set; }
     }
 }

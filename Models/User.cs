@@ -20,6 +20,18 @@ namespace WebCodeWork.Models
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        [MaxLength(255)]
+        public string? ProfilePhotoOriginalName { get; set; }
+
+        [MaxLength(255)]
+        public string? ProfilePhotoStoredName { get; set; }
+
+        [MaxLength(1024)]
+        public string? ProfilePhotoContentType { get; set; }
+        
+        [MaxLength(1024)]
+        public string? ProfilePhotoPath { get; set; }
+
         public virtual ICollection<ClassroomMember> ClassroomMemberships { get; set; } = new List<ClassroomMember>();
     }
 }

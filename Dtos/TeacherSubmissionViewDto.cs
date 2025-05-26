@@ -7,6 +7,7 @@ namespace WebCodeWork.Dtos
         // Student Info
         public int StudentId { get; set; }
         public string StudentUsername { get; set; } = string.Empty;
+        public string? ProfilePhotoUrl { get; set; }
 
         // Submission Info (Nullable if not submitted)
         public int? SubmissionId { get; set; }

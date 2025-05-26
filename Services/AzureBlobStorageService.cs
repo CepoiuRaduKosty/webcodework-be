@@ -28,6 +28,10 @@ namespace WebCodeWork.Services
         // --- Classroom Photo Methods ---
         Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile);
         Task<bool> DeleteClassroomPhotoAsync(string relativePath, string storedFileName);
+
+        // --- User Profile Photo Methods ---
+        Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile);
+        Task<bool> DeleteUserProfilePhotoAsync(string relativePath, string storedFileName);
     }
 }
 
@@ -37,8 +41,9 @@ namespace WebCodeWork.Services
     public class AzureBlobStorageService : IFileStorageService
     {
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly string _privateContainerName; // For submissions, test cases
-        private readonly string _publicPhotosContainerName; // For classroom photos
+        private readonly string _privateContainerName;
+        private readonly string _publicClassroomPhotosContainerName;
+        private readonly string _publicProfilePhotosContainerName;
         private readonly ILogger<AzureBlobStorageService> _logger;
 
         private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; // e.g., testcases/123/input
@@ -47,7 +52,8 @@ namespace WebCodeWork.Services
         {
             var connectionString = configuration.GetValue<string>("AzureStorage:ConnectionString");
             _privateContainerName = configuration.GetValue<string>("AzureStorage:PrivateContainerName") ?? "submissions";
-            _publicPhotosContainerName = configuration.GetValue<string>("AzureStorage:PublicPhotosContainerName") ?? "classroom-photos";
+            _publicClassroomPhotosContainerName = configuration.GetValue<string>("AzureStorage:PublicPhotosContainerName") ?? "classroom-photos";
+            _publicProfilePhotosContainerName = configuration.GetValue<string>("AzureStorage:PublicProfilePhotosContainerName") ?? "user-profile-photos";
             _logger = logger;
 
             if (string.IsNullOrEmpty(connectionString))
@@ -58,7 +64,9 @@ namespace WebCodeWork.Services
 
             EnsureContainerExistsAsync(_privateContainerName, PublicAccessType.None)
                 .ConfigureAwait(false).GetAwaiter().GetResult();
-            EnsureContainerExistsAsync(_publicPhotosContainerName, PublicAccessType.Blob)
+            EnsureContainerExistsAsync(_publicClassroomPhotosContainerName, PublicAccessType.Blob)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
+            EnsureContainerExistsAsync(_publicProfilePhotosContainerName, PublicAccessType.Blob)
                 .ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
@@ -285,11 +293,11 @@ namespace WebCodeWork.Services
         {
             return GetSubmissionFileAsync(relativePath, storedFileName, originalFileName);
         }
-        
+
         // --- NEW Classroom Photo Methods (use _publicPhotosContainerName) ---
         public async Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicPhotosContainerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicClassroomPhotosContainerName);
             // Define a path structure for classroom photos, e.g., by classroomId
             var relativePath = $"classrooms/{classroomId}/photo"; // Path within the public photos container
             var extension = Path.GetExtension(photoFile.FileName);
@@ -316,7 +324,7 @@ namespace WebCodeWork.Services
 
         public async Task<bool> DeleteClassroomPhotoAsync(string relativePath, string storedFileName)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicPhotosContainerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicClassroomPhotosContainerName);
             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
             var blobClient = containerClient.GetBlobClient(blobPath);
 
@@ -326,6 +334,55 @@ namespace WebCodeWork.Services
                 var response = await blobClient.DeleteIfExistsAsync();
                 if (response.Value) { _logger.LogInformation("Successfully deleted public blob {BlobPath}", blobPath); return true; }
                 else { _logger.LogWarning("Public blob {BlobPath} did not exist or already deleted.", blobPath); return false; }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting public blob {BlobPath}", blobPath);
+                return false;
+            }
+        }
+        
+
+        // --- User Profile Photo Methods ---
+        public async Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicProfilePhotosContainerName);
+            // Path structure: user_profile_photos/{userId}/{guid}.ext
+            var relativePath = $"users/{userId}/profile"; // Subfolder per user within the profile photos container
+            var extension = Path.GetExtension(photoFile.FileName);
+            var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
+            var blobPath = $"{relativePath}/{uniqueBlobName}";
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Uploading user profile photo {FileName} to public blob {BlobPath} for User {UserId}", photoFile.FileName, blobPath, userId);
+            try
+            {
+                using (var stream = photoFile.OpenReadStream())
+                {
+                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = photoFile.ContentType });
+                }
+                _logger.LogInformation("Successfully uploaded user profile photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
+                return (uniqueBlobName, relativePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading user profile photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
+                throw;
+            }
+        }
+
+        public async Task<bool> DeleteUserProfilePhotoAsync(string relativePath, string storedFileName)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicProfilePhotosContainerName);
+            var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Attempting to delete public blob (user profile photo) {BlobPath}...", blobPath);
+            try
+            {
+                var response = await blobClient.DeleteIfExistsAsync();
+                if (response.Value) { _logger.LogInformation("Successfully deleted public blob {BlobPath}", blobPath); return true; }
+                else { _logger.LogWarning("Public blob {BlobPath} did not exist or was already deleted.", blobPath); return false; }
             }
             catch (Exception ex)
             {
