@@ -481,7 +481,8 @@ namespace WebCodeWork.Controllers
                     Username = cm.User.Username, // Get username from included User entity
                     ClassroomId = cm.ClassroomId,
                     Role = cm.Role,
-                    JoinedAt = cm.JoinedAt
+                    JoinedAt = cm.JoinedAt,
+                    ProfilePhotoUrl = _fileService.GetPublicUserProfilePhotoUrl(cm.User.ProfilePhotoPath!, cm.User.ProfilePhotoStoredName!),
                 })
                 .ToList(); // Convert to List
 

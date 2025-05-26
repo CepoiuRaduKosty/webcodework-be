@@ -46,23 +46,6 @@ namespace WebCodeWork.Controllers
             return userId;
         }
 
-        // Helper to construct Photo URL (can be shared or defined per controller)
-        private string? GetPublicUserProfilePhotoUrl(User user)
-        {
-            if (string.IsNullOrEmpty(user.ProfilePhotoPath) || string.IsNullOrEmpty(user.ProfilePhotoStoredName))
-                return null;
-
-            var publicStorageBaseUrl = _configuration.GetValue<string>("AzureStorage:PublicStorageBaseUrl");
-            var profilePhotosContainer = _configuration.GetValue<string>("AzureStorage:PublicProfilePhotosContainerName");
-
-            if (string.IsNullOrEmpty(publicStorageBaseUrl) || string.IsNullOrEmpty(profilePhotosContainer))
-            {
-                _logger.LogWarning("PublicStorageBaseUrl or PublicProfilePhotosContainerName not configured.");
-                return null;
-            }
-            return $"{publicStorageBaseUrl.TrimEnd('/')}/{profilePhotosContainer.TrimEnd('/')}/{user.ProfilePhotoPath.TrimStart('/')}/{user.ProfilePhotoStoredName}";
-        }
-
         [HttpPost]
         [Consumes("multipart/form-data")]
         [ProducesResponseType(typeof(UserProfileDto), StatusCodes.Status200OK)] // Return updated user profile
@@ -113,7 +96,7 @@ namespace WebCodeWork.Controllers
             {
                 Id = user.Id,
                 Username = user.Username,
-                ProfilePhotoUrl = GetPublicUserProfilePhotoUrl(user),
+                ProfilePhotoUrl = _fileService.GetPublicUserProfilePhotoUrl(user.ProfilePhotoPath, user.ProfilePhotoStoredName),
                 CreatedAt = user.CreatedAt
             };
             return Ok(userProfileDto);

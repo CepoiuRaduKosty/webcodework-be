@@ -32,6 +32,9 @@ namespace WebCodeWork.Services
         // --- User Profile Photo Methods ---
         Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile);
         Task<bool> DeleteUserProfilePhotoAsync(string relativePath, string storedFileName);
+
+        // --- Misc ---
+        public string? GetPublicUserProfilePhotoUrl(string ProfilePhotoPath, string ProfilePhotoStoredName);
     }
 }
 
@@ -46,6 +49,8 @@ namespace WebCodeWork.Services
         private readonly string _publicProfilePhotosContainerName;
         private readonly ILogger<AzureBlobStorageService> _logger;
 
+        private readonly string _publicStorageBaseUrl;
+
         private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; // e.g., testcases/123/input
 
         public AzureBlobStorageService(IConfiguration configuration, ILogger<AzureBlobStorageService> logger)
@@ -54,6 +59,7 @@ namespace WebCodeWork.Services
             _privateContainerName = configuration.GetValue<string>("AzureStorage:PrivateContainerName") ?? "submissions";
             _publicClassroomPhotosContainerName = configuration.GetValue<string>("AzureStorage:PublicPhotosContainerName") ?? "classroom-photos";
             _publicProfilePhotosContainerName = configuration.GetValue<string>("AzureStorage:PublicProfilePhotosContainerName") ?? "user-profile-photos";
+            _publicStorageBaseUrl = configuration.GetValue<string>("AzureStorage:PublicStorageBaseUrl")!;
             _logger = logger;
 
             if (string.IsNullOrEmpty(connectionString))
@@ -341,7 +347,7 @@ namespace WebCodeWork.Services
                 return false;
             }
         }
-        
+
 
         // --- User Profile Photo Methods ---
         public async Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile)
@@ -389,6 +395,19 @@ namespace WebCodeWork.Services
                 _logger.LogError(ex, "Error deleting public blob {BlobPath}", blobPath);
                 return false;
             }
+        }
+        
+        public string? GetPublicUserProfilePhotoUrl(string ProfilePhotoPath, string ProfilePhotoStoredName)
+        {
+            if (string.IsNullOrEmpty(ProfilePhotoPath) || string.IsNullOrEmpty(ProfilePhotoStoredName))
+                return null;
+
+            if (string.IsNullOrEmpty(_publicStorageBaseUrl) || string.IsNullOrEmpty(_publicProfilePhotosContainerName))
+            {
+                _logger.LogWarning("PublicStorageBaseUrl or PublicProfilePhotosContainerName not configured.");
+                return null;
+            }
+            return $"{_publicStorageBaseUrl.TrimEnd('/')}/{_publicProfilePhotosContainerName.TrimEnd('/')}/{ProfilePhotoPath.TrimStart('/')}/{ProfilePhotoStoredName}";
         }
     }
 }
