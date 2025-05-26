@@ -15,5 +15,6 @@ namespace WebCodeWork.Dtos
         public string? Description { get; set; }
         public ClassroomRole CurrentUserRole { get; set; } // Role of the user making the request
         public List<ClassroomMemberDto> Members { get; set; } = new List<ClassroomMemberDto>(); // List of all members
+        public string? PhotoUrl { get; set; }
     }
 }

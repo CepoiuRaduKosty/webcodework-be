@@ -13,23 +13,21 @@ namespace WebCodeWork.Services
 {
     public interface IFileStorageService
     {
-        // Saves the file and returns (stored unique filename, relative storage path)
+        // --- Submission File Methods ---
         Task<(string StoredFileName, string RelativePath)> SaveSubmissionFileAsync(int submissionId, IFormFile file);
-
-        // Deletes the file from storage
         Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName);
-
-        // Gets a stream for downloading, content type, and preferred download name
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName);
         Task<(string StoredFileName, string RelativePath)> CreateEmptyFileAsync(int submissionId, string desiredFileName);
-        // Overwrites the content of an existing file with the provided string content.
-        // Returns true on success, false on failure (e.g., file not found in storage).
         Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent);
 
-        // --- NEW Test Case File Methods ---
-        Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file); // fileTypeDir = "input" or "output"
+        // --- Test Case File Methods ---
+        Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file);
         Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName);
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetTestCaseFileAsync(string relativePath, string storedFileName, string originalFileName);
+
+        // --- Classroom Photo Methods ---
+        Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile);
+        Task<bool> DeleteClassroomPhotoAsync(string relativePath, string storedFileName);
     }
 }
 
@@ -39,40 +37,56 @@ namespace WebCodeWork.Services
     public class AzureBlobStorageService : IFileStorageService
     {
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly string _containerName;
+        private readonly string _privateContainerName; // For submissions, test cases
+        private readonly string _publicPhotosContainerName; // For classroom photos
         private readonly ILogger<AzureBlobStorageService> _logger;
 
         private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; // e.g., testcases/123/input
 
         public AzureBlobStorageService(IConfiguration configuration, ILogger<AzureBlobStorageService> logger)
         {
-            // Use connection string from config (handles Azurite or real Azure)
             var connectionString = configuration.GetValue<string>("AzureStorage:ConnectionString");
-            _containerName = configuration.GetValue<string>("AzureStorage:ContainerName") ?? "submissions"; // Default container name
+            _privateContainerName = configuration.GetValue<string>("AzureStorage:PrivateContainerName") ?? "submissions";
+            _publicPhotosContainerName = configuration.GetValue<string>("AzureStorage:PublicPhotosContainerName") ?? "classroom-photos";
             _logger = logger;
 
             if (string.IsNullOrEmpty(connectionString))
             {
                 throw new InvalidOperationException("Azure Storage connection string 'AzureStorage:ConnectionString' not configured.");
             }
-
             _blobServiceClient = new BlobServiceClient(connectionString);
 
-            // Ensure container exists (optional: could require manual creation)
-            EnsureContainerExistsAsync().ConfigureAwait(false).GetAwaiter().GetResult(); // Run synchronously in constructor (or use async factory)
+            EnsureContainerExistsAsync(_privateContainerName, PublicAccessType.None)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
+            EnsureContainerExistsAsync(_publicPhotosContainerName, PublicAccessType.Blob)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
-        private async Task EnsureContainerExistsAsync()
+        private async Task EnsureContainerExistsAsync(string containerName, PublicAccessType accessType)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None); // Private container
-            _logger.LogInformation("Blob container '{ContainerName}' ensured.", _containerName);
+            try
+            {
+                var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+                var response = await containerClient.CreateIfNotExistsAsync(accessType);
+                if (response != null && response.GetRawResponse().Status == 201) // 201 means created
+                {
+                    _logger.LogInformation("Blob container '{ContainerName}' created with access type '{AccessType}'.", containerName, accessType);
+                }
+                else
+                {
+                    _logger.LogInformation("Blob container '{ContainerName}' already exists or no action taken. Ensure access type is '{AccessType}'.", containerName, accessType);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to ensure blob container '{ContainerName}' with access type '{AccessType}' exists.", containerName, accessType);
+                throw; // Critical for service operation
+            }
         }
 
         public async Task<(string StoredFileName, string RelativePath)> SaveSubmissionFileAsync(int submissionId, IFormFile file)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-            // Use a path structure within the container, e.g., submissions/{submissionId}/{guid}.ext
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var extension = Path.GetExtension(file.FileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
             var blobPath = $"submissions/{submissionId}/{uniqueBlobName}"; // Relative path within container
@@ -87,22 +101,18 @@ namespace WebCodeWork.Services
                     await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = file.ContentType });
                 }
                 _logger.LogInformation("Successfully uploaded file {FileName} to blob {BlobPath}", file.FileName, blobPath);
-                // For Azure Blob, the "StoredFileName" is the full blobPath within the container.
-                // The "RelativePath" concept from local storage isn't directly applicable in the same way.
-                // We'll return the uniqueBlobName and the directory structure as the relative path.
-                return (uniqueBlobName, $"submissions/{submissionId}"); // Return just the filename and its 'folder'
-                // OR return (blobPath, _containerName); // Alternative: return full path and container
+                return (uniqueBlobName, $"submissions/{submissionId}");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error uploading file {FileName} to blob {BlobPath}", file.FileName, blobPath);
-                throw; // Re-throw to indicate failure
+                throw;
             }
         }
 
         public async Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName) // relativePath here is the directory structure, storedFileName is the unique blob name
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/"); // Construct full blob path
             var blobClient = containerClient.GetBlobClient(blobPath);
 
@@ -130,7 +140,7 @@ namespace WebCodeWork.Services
 
         public async Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
             var blobClient = containerClient.GetBlobClient(blobPath);
 
@@ -160,7 +170,7 @@ namespace WebCodeWork.Services
 
         public async Task<(string StoredFileName, string RelativePath)> CreateEmptyFileAsync(int submissionId, string desiredFileName)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var extension = Path.GetExtension(desiredFileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
             var relativePath = $"submissions/{submissionId}"; // Directory structure
@@ -198,7 +208,7 @@ namespace WebCodeWork.Services
         // --- NEW Method Implementation ---
         public async Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
             var blobClient = containerClient.GetBlobClient(blobPath);
 
@@ -246,7 +256,7 @@ namespace WebCodeWork.Services
 
         public async Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file)
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var relativeDirPath = GetTestCaseBlobDir(assignmentId, fileTypeDir);
             var extension = Path.GetExtension(file.FileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
@@ -268,23 +278,60 @@ namespace WebCodeWork.Services
 
         public Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName)
         {
-            // Logic is identical to submission files for Azure Blob
             return DeleteSubmissionFileAsync(relativePath, storedFileName);
-            // Or implement separately:
-            // var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-            // var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
-            // var blobClient = containerClient.GetBlobClient(blobPath);
-            // try { ... blobClient.DeleteIfExistsAsync ... } catch { ... }
         }
 
         public Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetTestCaseFileAsync(string relativePath, string storedFileName, string originalFileName)
         {
-            // Logic is identical to submission files for Azure Blob
             return GetSubmissionFileAsync(relativePath, storedFileName, originalFileName);
-            // Or implement separately:
-            // var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
-            // var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
-            // ... etc ...
+        }
+        
+        // --- NEW Classroom Photo Methods (use _publicPhotosContainerName) ---
+        public async Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicPhotosContainerName);
+            // Define a path structure for classroom photos, e.g., by classroomId
+            var relativePath = $"classrooms/{classroomId}/photo"; // Path within the public photos container
+            var extension = Path.GetExtension(photoFile.FileName);
+            var uniqueBlobName = $"{Guid.NewGuid()}{extension}"; // Ensures unique name
+            var blobPath = $"{relativePath}/{uniqueBlobName}";   // Full path within the container
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Uploading classroom photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
+            try
+            {
+                using (var stream = photoFile.OpenReadStream())
+                {
+                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = photoFile.ContentType }); // Overwrite if same name
+                }
+                _logger.LogInformation("Successfully uploaded classroom photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
+                return (uniqueBlobName, relativePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading classroom photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
+                throw;
+            }
+        }
+
+        public async Task<bool> DeleteClassroomPhotoAsync(string relativePath, string storedFileName)
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_publicPhotosContainerName);
+            var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
+            var blobClient = containerClient.GetBlobClient(blobPath);
+
+            _logger.LogInformation("Attempting to delete public blob (classroom photo) {BlobPath}...", blobPath);
+            try
+            {
+                var response = await blobClient.DeleteIfExistsAsync();
+                if (response.Value) { _logger.LogInformation("Successfully deleted public blob {BlobPath}", blobPath); return true; }
+                else { _logger.LogWarning("Public blob {BlobPath} did not exist or already deleted.", blobPath); return false; }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting public blob {BlobPath}", blobPath);
+                return false;
+            }
         }
     }
 }

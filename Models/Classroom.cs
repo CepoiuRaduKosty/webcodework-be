@@ -1,6 +1,7 @@
 // Models/Classroom.cs
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Collections.Generic;
 
 namespace WebCodeWork.Models
 {
@@ -18,6 +19,18 @@ namespace WebCodeWork.Models
         public string? Description { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        [MaxLength(255)]
+        public string? PhotoOriginalName { get; set; } // Original uploaded name
+
+        [MaxLength(255)]
+        public string? PhotoStoredName { get; set; } // Name used for storage (e.g., GUID.ext)
+
+        [MaxLength(1024)]
+        public string? PhotoContentType { get; set; } // e.g., image/jpeg, image/png
+
+        [MaxLength(1024)]
+        public string? PhotoPath { get; set; } // e.g., "classrooms_photos/123/guid.jpg"
 
         // Navigation property for members
         public virtual ICollection<ClassroomMember> Members { get; set; } = new List<ClassroomMember>();
