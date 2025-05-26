@@ -410,7 +410,7 @@ namespace WebCodeWork.Controllers
 
             var userClassroomsModels = await _context.ClassroomMembers
                 .Where(cm => cm.UserId == currentUserId)
-                .Include(cm => cm.Classroom) 
+                .Include(cm => cm.Classroom)
                 .OrderBy(cm => cm.Classroom.Name)
                 .ToListAsync();
 
@@ -613,6 +613,79 @@ namespace WebCodeWork.Controllers
             }
 
             return NoContent();
+        }
+        
+        [HttpPut("{classroomId}")]
+        [ProducesResponseType(typeof(ClassroomDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> UpdateClassroom(int classroomId, [FromBody] UpdateClassroomDto updateDto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return ValidationProblem(ModelState);
+            }
+
+            int currentUserId;
+            try
+            {
+                currentUserId = GetCurrentUserId();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message });
+            }
+
+            _logger.LogInformation("User {UserId} attempting to update classroom {ClassroomId}", currentUserId, classroomId);
+
+            var classroom = await _context.Classrooms.FirstOrDefaultAsync(c => c.Id == classroomId);
+
+            if (classroom == null)
+            {
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = $"Classroom with ID {classroomId} not found." });
+            }
+
+            var userRole = await GetUserRoleInClassroom(currentUserId, classroomId);
+            if (userRole != ClassroomRole.Owner)
+            {
+                _logger.LogWarning("User {UserId} (Role: {UserRole}) forbidden from updating classroom {ClassroomId}.",
+                    currentUserId, userRole?.ToString() ?? "N/A", classroomId);
+                return Forbid(); 
+            }
+
+            classroom.Name = updateDto.Name;
+            classroom.Description = updateDto.Description;
+
+            _context.Classrooms.Update(classroom);
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Classroom {ClassroomId} updated successfully by User {UserId}.", classroomId, currentUserId);
+
+                var classroomDto = new ClassroomDto
+                {
+                    Id = classroom.Id,
+                    Name = classroom.Name,
+                    Description = classroom.Description,
+                    CreatedAt = classroom.CreatedAt,
+                    PhotoUrl = GetPublicPhotoUrl(classroom.PhotoPath!, classroom.PhotoStoredName!)
+                };
+                return Ok(classroomDto);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                 _logger.LogError(ex, "Concurrency error while updating classroom {ClassroomId}.", classroomId);
+                 return Conflict(new ProblemDetails { Title = "Conflict", Detail = "The classroom was modified by another user. Please refresh and try again."});
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Database error while updating classroom {ClassroomId}.", classroomId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not update classroom details." });
+            }
         }
     }
 }
