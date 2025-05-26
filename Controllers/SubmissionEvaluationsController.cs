@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.SignalR;
 using WebCodeWork.Hubs;
 using Microsoft.Extensions.DependencyInjection;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 
 namespace YourMainBackend.Controllers
 {
@@ -146,7 +147,7 @@ namespace YourMainBackend.Controllers
 
             if (!await CanUserTriggerEvaluation(currentUserId, submission.Assignment.ClassroomId, submissionId)) return Forbid();
 
-            if (submission.Assignment == null) // Should not happen with Include
+            if (submission.Assignment == null)
             {
                 _logger.LogError("Assignment data missing for submission {SubmissionId}", submissionId);
                 return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Assignment data is missing." });
@@ -171,12 +172,28 @@ namespace YourMainBackend.Controllers
             {
                 using (var scope = _serviceScopeFactory.CreateScope())
                 {
-                    var scopedContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    var scopedDbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                     var scopedHttpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
                     var scopedConfiguration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
                     var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<SubmissionEvaluationsController>>();
 
                     scopedLogger.LogInformation("[Background] Starting actual evaluation for User {UserId}, Submission {SubmissionId}", currentUserIdString, submissionId);
+
+                    // Fetch a fresh copy of submission and assignment test cases within this scope
+                    // This ensures we have the most up-to-date data and it's tracked by scopedDbContext
+                    var currentSubmission = await scopedDbContext.AssignmentSubmissions
+                        .Include(s => s.Assignment)
+                            .ThenInclude(a => a!.TestCases)
+                        .FirstOrDefaultAsync(s => s.Id == submissionId);
+
+                    // If submission or assignment vanished or test cases removed between trigger and now.
+                    if (currentSubmission == null || currentSubmission.Assignment == null || currentSubmission.Assignment.TestCases == null)
+                    {
+                        scopedLogger.LogError("[Background] Submission or critical related data not found for Submission {SubmissionId}", submissionId);
+                        var errorPayload = new EvaluationResultSignalRD { OverallStatus = "Submission or testcases modified or removed between trigger and now" };
+                        await _evaluationHubContext.Clients.User(currentUserIdString).SendAsync("ReceiveEvaluationResult", errorPayload, submissionId, normalizedLanguage);
+                        return;
+                    }
 
                     var codeRunnerRequest = new CodeRunnerEvaluateRequest
                     {
@@ -195,12 +212,12 @@ namespace YourMainBackend.Controllers
 
                     var runnerBaseUrl = scopedConfiguration.GetValue<string>("CodeRunnerService:BaseUrl");
                     var runnerApiKey = scopedConfiguration.GetValue<string>("CodeRunnerService:ApiKey");
-                    CodeRunnerEvaluateResponse? finalRunnerResponse = null;
+                    CodeRunnerEvaluateResponse? orchestratorResponse = null;
 
                     if (string.IsNullOrEmpty(runnerBaseUrl) || string.IsNullOrEmpty(runnerApiKey))
                     {
                         scopedLogger.LogCritical("[Background] CodeRunnerService URL or API Key not configured for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
-                        finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "ConfigurationError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                        orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = "ConfigurationError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                     }
                     else
                     {
@@ -216,38 +233,112 @@ namespace YourMainBackend.Controllers
                             HttpResponseMessage runnerHttpResponse = await httpClient.PostAsJsonAsync("/api/evaluate/orchestrate", codeRunnerRequest);
                             if (runnerHttpResponse.IsSuccessStatusCode)
                             {
-                                finalRunnerResponse = await runnerHttpResponse.Content.ReadFromJsonAsync<CodeRunnerEvaluateResponse>();
+                                orchestratorResponse = await runnerHttpResponse.Content.ReadFromJsonAsync<CodeRunnerEvaluateResponse>();
                             }
                             else
                             {
                                 var errorContent = await runnerHttpResponse.Content.ReadAsStringAsync();
                                 scopedLogger.LogError("[Background] CodeRunnerService returned error for User {UserId}, Submission {SubmissionId}. Status: {StatusCode}. Body: {ErrorBody}",
                                     currentUserIdString, submissionId, runnerHttpResponse.StatusCode, errorContent);
-                                finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = $"RunnerError: {runnerHttpResponse.StatusCode}", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                                orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = $"RunnerError: {runnerHttpResponse.StatusCode}", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                             }
                         }
                         catch (TaskCanceledException tex) when (tex.InnerException is TimeoutException) // HttpClient timeout
                         {
                             scopedLogger.LogError(tex, "[Background] HttpClient request to CodeRunnerService timed out for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
-                            finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerTimeout", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                            orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerTimeout", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                         }
                         catch (HttpRequestException httpEx)
                         {
                             scopedLogger.LogError(httpEx, "[Background] HTTP request to CodeRunnerService failed for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
-                            finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerUnreachable", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                            orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerUnreachable", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                         }
                         catch (Exception ex)
                         {
                             scopedLogger.LogError(ex, "[Background] Unexpected error during CodeRunnerService call for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
-                            finalRunnerResponse = new CodeRunnerEvaluateResponse { OverallStatus = "OrchestratorError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
+                            orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = "OrchestratorError", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                         }
                     }
 
-                    if (finalRunnerResponse != null)
+                    int? pointsObtained = null;
+                    int? totalPossiblePoints = null;
+                    string finalOverallStatus = EvaluationStatus.InternalError; // Default if orchestratorResponse is null
+
+                    if (orchestratorResponse != null)
                     {
-                        scopedLogger.LogInformation("[Background] Sending evaluation result via SignalR to User {UserId} for Submission {SubmissionId}.", currentUserIdString, submissionId);
-                        await _evaluationHubContext.Clients.User(currentUserIdString).SendAsync("ReceiveEvaluationResult", finalRunnerResponse, submissionId);
+                        finalOverallStatus = orchestratorResponse.OverallStatus; // Use orchestrator's overall status
+
+                        if (orchestratorResponse.CompilationSuccess && orchestratorResponse.Results != null)
+                        {
+                            pointsObtained = 0;
+                            totalPossiblePoints = 0;
+
+                            // Create a dictionary of TestCaseId to Points for quick lookup
+                            var testCasePointsMap = currentSubmission.Assignment.TestCases
+                                .ToDictionary(tc => tc.Id.ToString(), tc => tc.Points);
+
+                            foreach (var tcResult in orchestratorResponse.Results)
+                            {
+                                if (tcResult.TestCaseId != null && testCasePointsMap.TryGetValue(tcResult.TestCaseId, out var pointsForThisCase))
+                                {
+                                    totalPossiblePoints = (totalPossiblePoints ?? 0) + pointsForThisCase;
+                                    if (tcResult.Status == EvaluationStatus.Accepted) // Assuming EvaluationStatus is shared/mirrored
+                                    {
+                                        pointsObtained = (pointsObtained ?? 0) + pointsForThisCase;
+                                    }
+                                }
+                            }
+                        }
+                        else if (!orchestratorResponse.CompilationSuccess)
+                        {
+                            pointsObtained = 0;
+                            totalPossiblePoints = currentSubmission.Assignment.TestCases.Sum(tc => tc.Points);
+                        }
+                        
+                        currentSubmission.LastEvaluationPointsObtained = pointsObtained;
+                        currentSubmission.LastEvaluationTotalPossiblePoints = totalPossiblePoints;
+                        currentSubmission.LastEvaluatedAt = DateTime.UtcNow;
+                        currentSubmission.LastEvaluationOverallStatus = finalOverallStatus;
+                        currentSubmission.LastEvaluationDetailsJson = JsonSerializer.Serialize(orchestratorResponse, new JsonSerializerOptions { WriteIndented = false }); // Store the raw response
+
+                        try
+                        {
+                            await scopedDbContext.SaveChangesAsync();
+                            scopedLogger.LogInformation("[Background] Successfully saved evaluation results for Submission {SubmissionId}", submissionId);
+                        }
+                        catch (Exception dbEx)
+                        {
+                            scopedLogger.LogError(dbEx, "[Background] Failed to save evaluation results for Submission {SubmissionId}", submissionId);
+                        }
                     }
+                    else
+                    {
+                        currentSubmission.LastEvaluationOverallStatus = EvaluationStatus.InternalError;
+                        currentSubmission.LastEvaluatedAt = DateTime.UtcNow;
+                        currentSubmission.LastEvaluationDetailsJson = JsonSerializer.Serialize(new { error = "Failed to get response from runner service." });
+                        try { await scopedDbContext.SaveChangesAsync(); } catch (Exception ex) { scopedLogger.LogError(ex, "Failed to save internal error state to submission {SubmissionId}", submissionId); }
+                    }
+                    
+                    var signalRPayload = new EvaluationResultSignalRD
+                    {
+                        SubmissionId = submissionId,
+                        EvaluatedLanguage = normalizedLanguage,
+                        OverallStatus = orchestratorResponse?.OverallStatus ?? EvaluationStatus.InternalError,
+                        CompilationSuccess = orchestratorResponse?.CompilationSuccess ?? false,
+                        CompilerOutput = orchestratorResponse?.CompilerOutput,
+                        Results = orchestratorResponse?.Results ?? new List<CodeRunnerTestCaseResult>(), // Send empty list if null
+                        PointsObtained = pointsObtained,
+                        TotalPossiblePoints = totalPossiblePoints
+                    };
+
+                    scopedLogger.LogInformation("[Background] Sending evaluation result via SignalR to User {UserId} for Submission {SubmissionId}. Points: {Obtained}/{Possible}",
+                        currentUserIdString, submissionId, pointsObtained, totalPossiblePoints);
+                    await _evaluationHubContext.Clients.User(currentUserIdString).SendAsync(
+                        "ReceiveEvaluationResult",
+                        signalRPayload, // Send the augmented DTO
+                        submissionId,   // Keep submissionId for client-side check
+                        normalizedLanguage // Keep language for client-side check
+                    );
                 }
             });
 

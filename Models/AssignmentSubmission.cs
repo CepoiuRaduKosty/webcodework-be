@@ -23,6 +23,13 @@ namespace WebCodeWork.Models
         public DateTime? GradedAt { get; set; }
         public int? GradedById { get; set; } // FK to User (who graded it)
 
+        public int? LastEvaluationPointsObtained { get; set; }
+        public int? LastEvaluationTotalPossiblePoints { get; set; }
+        public DateTime? LastEvaluatedAt { get; set; }
+        public string? LastEvaluationOverallStatus { get; set; }
+
+        public string? LastEvaluationDetailsJson { get; set; }
+
         // Navigation Properties
         [ForeignKey(nameof(AssignmentId))]
         public virtual Assignment Assignment { get; set; } = null!;

@@ -50,4 +50,30 @@ namespace WebCodeWork.Dtos // Adjust namespace as needed
         public string? CompilerOutput { get; set; }
         public List<CodeRunnerTestCaseResult> Results { get; set; } = new List<CodeRunnerTestCaseResult>();
     }
+
+    public class EvaluationResultSignalRD
+    {
+        public int SubmissionId { get; set; }
+        public string EvaluatedLanguage { get; set; } = string.Empty;
+        public string OverallStatus { get; set; } = "Error";
+        public bool CompilationSuccess { get; set; }
+        public string? CompilerOutput { get; set; }
+        public List<CodeRunnerTestCaseResult> Results { get; set; } = new List<CodeRunnerTestCaseResult>();
+
+        public int? PointsObtained { get; set; }
+        public int? TotalPossiblePoints { get; set; }
+    }
+    
+    public static class EvaluationStatus
+    {
+        public const string Accepted = "ACCEPTED";
+        public const string WrongAnswer = "WRONG_ANSWER";
+        public const string CompileError = "COMPILE_ERROR";
+        public const string RuntimeError = "RUNTIME_ERROR";
+        public const string TimeLimitExceeded = "TIME_LIMIT_EXCEEDED";
+        public const string MemoryLimitExceeded = "MEMORY_LIMIT_EXCEEDED";
+        public const string FileError = "FILE_ERROR";
+        public const string LanguageNotSupported = "LANGUAGE_NOT_SUPPORTED";
+        public const string InternalError = "INTERNAL_ERROR";
+    }
 }
