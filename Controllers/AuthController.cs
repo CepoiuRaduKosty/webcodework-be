@@ -4,6 +4,11 @@ using WebCodeWork.Data;
 using WebCodeWork.Dtos;
 using WebCodeWork.Models;
 using WebCodeWork.Services;
+using System.Text.RegularExpressions; 
+using System.Linq;
+using PwnedPasswords.Client;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace YourProjectName.Controllers
 {
@@ -14,18 +19,71 @@ namespace YourProjectName.Controllers
         private readonly ApplicationDbContext _context;
         private readonly IPasswordService _passwordService;
         private readonly ITokenService _tokenService;
-        private readonly ILogger<AuthController> _logger; // Optional: for logging
+        private readonly ILogger<AuthController> _logger;
+        private readonly IPwnedPasswordsClient _pwnedPasswordsClient;
+
+        private const int MinPasswordLength = 8;
 
         public AuthController(
             ApplicationDbContext context,
             IPasswordService passwordService,
             ITokenService tokenService,
+            IPwnedPasswordsClient pwnedPasswordsClient,
             ILogger<AuthController> logger)
         {
             _context = context;
             _passwordService = passwordService;
             _tokenService = tokenService;
+            _pwnedPasswordsClient = pwnedPasswordsClient;
             _logger = logger;
+        }
+
+        private async Task<List<string>> ValidatePassword(string password, string username)
+        {
+            var errors = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(password) || password.Length < MinPasswordLength)
+            {
+                errors.Add($"Password must be at least {MinPasswordLength} characters long.");
+            }
+            if (!Regex.IsMatch(password, @"[A-Z]"))
+            {
+                errors.Add("Password must contain at least one uppercase letter.");
+            }
+            if (!Regex.IsMatch(password, @"[a-z]"))
+            {
+                errors.Add("Password must contain at least one lowercase letter.");
+            }
+            if (!Regex.IsMatch(password, @"[0-9]"))
+            {
+                errors.Add("Password must contain at least one digit.");
+            }
+            if (!Regex.IsMatch(password, @"[\W_]")) // \W is non-word character, _ is underscore
+            {
+                errors.Add("Password must contain at least one special character (e.g., !@#$%^&*).");
+            }
+
+            // Prevent passwords too similar to username (basic check)
+            if (!string.IsNullOrWhiteSpace(username) && password.ToLower().Contains(username.ToLower()))
+            {
+                errors.Add("Password should not contain your username.");
+            }
+            
+            try
+            {
+                var pwned = await _pwnedPasswordsClient.HasPasswordBeenPwned(password);
+                if (pwned)
+                {
+                    _logger.LogWarning("User attempted to register with a pwned password (Username: {Username}, PwnedCount: {PwnedCount})", username, password);
+                    errors.Add("This password has appeared in a data breach and is not allowed. Please choose a different password.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking password against HIBP Pwned Passwords API.");
+            }
+
+            return errors;
         }
 
         [HttpPost("register")]
@@ -36,7 +94,13 @@ namespace YourProjectName.Controllers
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                return ValidationProblem(ModelState);
+            }
+
+            var passwordValidationErrors = await ValidatePassword(registerDto.Password, registerDto.Username);
+            if (passwordValidationErrors.Any())
+            {
+                return BadRequest(new { message = passwordValidationErrors[0] });
             }
 
             var existingUser = await _context.Users

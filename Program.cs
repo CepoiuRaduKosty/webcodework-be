@@ -2,9 +2,11 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.EntityFrameworkCore;
-using WebCodeWork.Data; // Add this
+using WebCodeWork.Data;
 using WebCodeWork.Services;
-using WebCodeWork.Hubs; // Add this
+using WebCodeWork.Hubs;
+using PwnedPasswords.Client;
+using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -121,6 +123,8 @@ builder.Services.AddSwaggerGen(options => // Optional: Configure Swagger for JWT
         new string[] {}
     }});
 });
+
+builder.Services.AddPwnedPasswordHttpClient();
 
 var app = builder.Build();
 
