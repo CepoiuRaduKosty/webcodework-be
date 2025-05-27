@@ -23,6 +23,7 @@ namespace YourProjectName.Controllers
         private readonly ITokenService _tokenService;
         private readonly ILogger<AuthController> _logger;
         private readonly IPwnedPasswordsClient _pwnedPasswordsClient;
+        private readonly IFileStorageService _fileStorageService;
 
         private const int MinPasswordLength = 8;
 
@@ -31,13 +32,15 @@ namespace YourProjectName.Controllers
             IPasswordService passwordService,
             ITokenService tokenService,
             IPwnedPasswordsClient pwnedPasswordsClient,
-            ILogger<AuthController> logger)
+            ILogger<AuthController> logger,
+            IFileStorageService fileStorageService)
         {
             _context = context;
             _passwordService = passwordService;
             _tokenService = tokenService;
             _pwnedPasswordsClient = pwnedPasswordsClient;
             _logger = logger;
+            _fileStorageService = fileStorageService;
         }
 
         private async Task<List<string>> ValidatePassword(string password, string username)
@@ -176,6 +179,7 @@ namespace YourProjectName.Controllers
                 Username = user.Username,
                 Expiration = expiration,
                 Id = user.Id,
+                ProfilePhotoUrl = _fileStorageService.GetPublicUserProfilePhotoUrl(user.ProfilePhotoPath!, user.ProfilePhotoStoredName!)
             });
         }
 
