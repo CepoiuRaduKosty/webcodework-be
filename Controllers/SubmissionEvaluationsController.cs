@@ -294,13 +294,46 @@ namespace YourMainBackend.Controllers
                             pointsObtained = 0;
                             totalPossiblePoints = currentSubmission.Assignment.TestCases.Sum(tc => tc.Points);
                         }
-                        
+
                         currentSubmission.LastEvaluationPointsObtained = pointsObtained;
                         currentSubmission.LastEvaluationTotalPossiblePoints = totalPossiblePoints;
                         currentSubmission.LastEvaluatedAt = DateTime.UtcNow;
                         currentSubmission.LastEvaluationOverallStatus = finalOverallStatus;
-                        currentSubmission.LastEvaluationDetailsJson = JsonSerializer.Serialize(orchestratorResponse, new JsonSerializerOptions { WriteIndented = false }); // Store the raw response
+                        currentSubmission.LastEvaluatedLanguage = language;
 
+                    }
+                    else
+                    {
+                        currentSubmission.LastEvaluationOverallStatus = EvaluationStatus.InternalError;
+                        currentSubmission.LastEvaluatedAt = DateTime.UtcNow;
+                    }
+
+                    var signalRPayload = new EvaluationResultSignalRD
+                    {
+                        SubmissionId = submissionId,
+                        EvaluatedLanguage = normalizedLanguage,
+                        OverallStatus = orchestratorResponse?.OverallStatus ?? EvaluationStatus.InternalError,
+                        CompilationSuccess = orchestratorResponse?.CompilationSuccess ?? false,
+                        CompilerOutput = orchestratorResponse?.CompilerOutput,
+                        Results = orchestratorResponse?.Results ?? new List<CodeRunnerTestCaseResult>(),
+                        PointsObtained = pointsObtained,
+                        TotalPossiblePoints = totalPossiblePoints,
+                    };
+
+                    foreach (var tc in signalRPayload.Results)
+                    {
+                        var dbtc = submission.Assignment.TestCases.FirstOrDefault(t => t.Id.ToString() == tc.TestCaseId);
+                        tc.TestCaseName = dbtc!.InputFileName;
+                    }
+
+                    if (orchestratorResponse != null)
+                    {
+                        var jsonOptions = new JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                            WriteIndented = false,
+                        };
+                        currentSubmission.LastEvaluationDetailsJson = JsonSerializer.Serialize(signalRPayload, jsonOptions);
                         try
                         {
                             await scopedDbContext.SaveChangesAsync();
@@ -313,23 +346,9 @@ namespace YourMainBackend.Controllers
                     }
                     else
                     {
-                        currentSubmission.LastEvaluationOverallStatus = EvaluationStatus.InternalError;
-                        currentSubmission.LastEvaluatedAt = DateTime.UtcNow;
                         currentSubmission.LastEvaluationDetailsJson = JsonSerializer.Serialize(new { error = "Failed to get response from runner service." });
                         try { await scopedDbContext.SaveChangesAsync(); } catch (Exception ex) { scopedLogger.LogError(ex, "Failed to save internal error state to submission {SubmissionId}", submissionId); }
                     }
-                    
-                    var signalRPayload = new EvaluationResultSignalRD
-                    {
-                        SubmissionId = submissionId,
-                        EvaluatedLanguage = normalizedLanguage,
-                        OverallStatus = orchestratorResponse?.OverallStatus ?? EvaluationStatus.InternalError,
-                        CompilationSuccess = orchestratorResponse?.CompilationSuccess ?? false,
-                        CompilerOutput = orchestratorResponse?.CompilerOutput,
-                        Results = orchestratorResponse?.Results ?? new List<CodeRunnerTestCaseResult>(),
-                        PointsObtained = pointsObtained,
-                        TotalPossiblePoints = totalPossiblePoints,
-                    };
 
                     foreach (var tc in signalRPayload.Results)
                     {
@@ -347,7 +366,6 @@ namespace YourMainBackend.Controllers
                         {
                             tc.IsPrivate = false;
                         }
-                        tc.TestCaseName = dbtc.InputFileName;
                     }
 
                     scopedLogger.LogInformation("[Background] Sending evaluation result via SignalR to User {UserId} for Submission {SubmissionId}. Points: {Obtained}/{Possible}",

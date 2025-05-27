@@ -30,6 +30,8 @@ namespace WebCodeWork.Models
 
         public string? LastEvaluationDetailsJson { get; set; }
 
+        public string? LastEvaluatedLanguage { get; set; }
+
         // Navigation Properties
         [ForeignKey(nameof(AssignmentId))]
         public virtual Assignment Assignment { get; set; } = null!;

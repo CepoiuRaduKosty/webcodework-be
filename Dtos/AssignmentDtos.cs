@@ -80,6 +80,7 @@ namespace WebCodeWork.Dtos
         public string? LastEvaluationOverallStatus { get; set; }
 
         public string? LastEvaluationDetailsJson { get; set; }
+        public string? LastEvaluatedLanguage { get; set; }
     }
 
     public class SubmissionSummaryDto // For lists shown to teachers

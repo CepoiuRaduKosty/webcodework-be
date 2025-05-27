@@ -509,7 +509,7 @@ public class SubmissionsController : ControllerBase
         var studentsInClass = await _context.ClassroomMembers
             .Where(cm => cm.ClassroomId == assignment.ClassroomId && cm.Role == ClassroomRole.Student)
             .Include(cm => cm.User) // Include User to get username
-            .Select(cm => new { cm.UserId, cm.User.Username })
+            .Select(cm => new { cm.UserId, cm.User.Username, profilePhotoUrl = _fileService.GetPublicUserProfilePhotoUrl(cm.User.ProfilePhotoPath!, cm.User.ProfilePhotoStoredName!) })
             .ToListAsync();
 
         // 2. Get all existing submissions for this assignment, optimized for lookup
@@ -541,6 +541,7 @@ public class SubmissionsController : ControllerBase
             {
                 StudentId = student.UserId,
                 StudentUsername = student.Username ?? "N/A",
+                ProfilePhotoUrl = student.profilePhotoUrl,
             };
 
             // Check if this student has a submission in our dictionary
@@ -638,6 +639,12 @@ public class SubmissionsController : ControllerBase
             GradedAt = submission.GradedAt,
             GradedById = submission.GradedById,
             GradedByUsername = submission.GradedBy?.Username, // Null-conditional access
+            LastEvaluatedLanguage = submission.LastEvaluatedLanguage,
+            LastEvaluatedAt = submission.LastEvaluatedAt,
+            LastEvaluationDetailsJson = submission.LastEvaluationDetailsJson,
+            LastEvaluationOverallStatus = submission.LastEvaluationOverallStatus,
+            LastEvaluationPointsObtained = submission.LastEvaluationPointsObtained,
+            LastEvaluationTotalPossiblePoints = submission.LastEvaluationTotalPossiblePoints,
             SubmittedFiles = submission.SubmittedFiles.Select(file => new SubmittedFileDto
             {
                 Id = file.Id,
@@ -652,37 +659,62 @@ public class SubmissionsController : ControllerBase
         return Ok(dto);
     }
 
-    // GET /api/submissions/{submissionId}/files/{fileId} - Download a Submitted File
-    [HttpGet("submissions/{submissionId}/files/{fileId}")]
+    [HttpGet("submissions/{submissionId}/files/{fileId}/download")] // Or just "{fileId}" if route is nested
     [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
-    // ... other response types ...
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DownloadSubmittedFile(int submissionId, int fileId)
     {
-        int currentUserId = GetCurrentUserId();
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); } // Assuming GetCurrentUserId() is in this controller
+        catch (UnauthorizedAccessException) { return Unauthorized(); }
 
         var fileRecord = await _context.SubmittedFiles
-                                      .Include(f => f.AssignmentSubmission).ThenInclude(s => s!.Assignment) // Need nested include
-                                      .FirstOrDefaultAsync(f => f.Id == fileId && f.AssignmentSubmissionId == submissionId);
+            .Include(f => f.AssignmentSubmission)
+                .ThenInclude(s => s!.Assignment) // For ClassroomId to check role
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.AssignmentSubmissionId == submissionId);
 
-        if (fileRecord == null) return NotFound();
+        if (fileRecord == null)
+        {
+            return NotFound(new ProblemDetails { Title = "File Not Found", Detail = "The requested file does not exist or is not part of this submission." });
+        }
 
-        // Auth Check: Owner/Teacher of class OR student owner
-        var userRole = await GetUserRoleInClassroom(currentUserId, fileRecord.AssignmentSubmission.Assignment.ClassroomId);
-        bool isOwnerTeacher = userRole == ClassroomRole.Owner || userRole == ClassroomRole.Teacher;
+        // Authorization Check:
+        // 1. Is the current user the student who owns this submission?
+        // 2. Or, is the current user a Teacher/Owner in the classroom this submission belongs to?
         bool isStudentOwner = fileRecord.AssignmentSubmission.StudentId == currentUserId;
+        bool isPrivilegedUserInClassroom = false;
 
-        if (!isOwnerTeacher && !isStudentOwner) return Forbid();
+        if (!isStudentOwner) // Only do this check if not the student owner
+        {
+            var userRole = await GetUserRoleInClassroom(currentUserId, fileRecord.AssignmentSubmission.Assignment.ClassroomId); // Assuming GetUserRoleInClassroom exists
+            isPrivilegedUserInClassroom = userRole == ClassroomRole.Owner || userRole == ClassroomRole.Teacher;
+        }
+
+        if (!isStudentOwner && !isPrivilegedUserInClassroom)
+        {
+            _logger.LogWarning("User {UserId} forbidden from downloading file {FileId} for submission {SubmissionId}.", currentUserId, fileId, submissionId);
+            return Forbid();
+        }
 
         // Get file stream from storage service
-        var (fileStream, contentType, downloadName) = await _fileService.GetSubmissionFileAsync(
-            fileRecord.FilePath,
-            fileRecord.StoredFileName,
-            fileRecord.FileName // Pass original name for download header
+        // GetSubmissionFileAsync should return (Stream? FileStream, string? ContentType, string OriginalDownloadName)
+        var (fileStream, contentType, originalFileName) = await _fileService.GetSubmissionFileAsync(
+            fileRecord.FilePath,       // Relative path within the (private) container
+            fileRecord.StoredFileName, // Unique stored name
+            fileRecord.FileName        // Original filename to suggest to the user
         );
 
-        if (fileStream == null) return NotFound(new { message = "File not found in storage." });
+        if (fileStream == null)
+        {
+            _logger.LogError("File {FileId} ({OriginalName}) found in DB but not in storage for submission {SubmissionId}.", fileId, originalFileName, submissionId);
+            return NotFound(new ProblemDetails { Title = "File Not Found in Storage", Detail = "The file content could not be retrieved from storage." });
+        }
 
-        return File(fileStream, contentType ?? "application/octet-stream", downloadName);
+        // Return the file. The browser will handle it as a download.
+        // EF Core will dispose the stream when the result is executed if it's a FileStreamResult.
+        return File(fileStream, contentType ?? "application/octet-stream", originalFileName);
     }
 
 
@@ -928,7 +960,7 @@ public class SubmissionsController : ControllerBase
 
         if (!isOwnerTeacher && !isStudentOwner)
         {
-             _logger.LogWarning("User {UserId} forbidden from accessing content of file {FileId} on submission {SubmissionId}.", currentUserId, fileId, submissionId);
+            _logger.LogWarning("User {UserId} forbidden from accessing content of file {FileId} on submission {SubmissionId}.", currentUserId, fileId, submissionId);
             return Forbid();
         }
 
@@ -941,8 +973,8 @@ public class SubmissionsController : ControllerBase
 
         if (fileStream == null)
         {
-             _logger.LogError("File record {FileId} found in DB but file not found in storage: Path='{FilePath}', Name='{StoredFileName}'",
-                        fileId, fileRecord.FilePath, fileRecord.StoredFileName);
+            _logger.LogError("File record {FileId} found in DB but file not found in storage: Path='{FilePath}', Name='{StoredFileName}'",
+                       fileId, fileRecord.FilePath, fileRecord.StoredFileName);
             // Return 404 even if DB record exists, as content is missing
             return NotFound(new { message = "File content not found in storage." });
         }
@@ -1020,12 +1052,12 @@ public class SubmissionsController : ControllerBase
         bool success = false;
         try
         {
-             success = await _fileService.OverwriteSubmissionFileAsync(fileRecord.FilePath, fileRecord.StoredFileName, content);
+            success = await _fileService.OverwriteSubmissionFileAsync(fileRecord.FilePath, fileRecord.StoredFileName, content);
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
-             _logger.LogError(ex, "File service failed during overwrite for file {FileId}.", fileId);
-             // Fall through to return 500 below if success remains false
+            _logger.LogError(ex, "File service failed during overwrite for file {FileId}.", fileId);
+            // Fall through to return 500 below if success remains false
         }
 
         if (!success)
@@ -1047,11 +1079,113 @@ public class SubmissionsController : ControllerBase
         }
         catch (DbUpdateException dbEx)
         {
-             _logger.LogError(dbEx, "Database error updating SubmittedFile record {FileId} after content update.", fileId);
-             // Potentially inconsistent state: file updated in storage but DB failed. Difficult to roll back storage.
-             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving file metadata after update." });
+            _logger.LogError(dbEx, "Database error updating SubmittedFile record {FileId} after content update.", fileId);
+            // Potentially inconsistent state: file updated in storage but DB failed. Difficult to roll back storage.
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Database error saving file metadata after update." });
         }
 
         return NoContent(); // Success
+    }
+    
+    [HttpPost("submissions/{submissionId}/unsubmit")] // Using POST for action with side effects
+    [ProducesResponseType(typeof(SubmissionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UnsubmitStudentSubmission(int submissionId)
+    {
+        int currentUserId;
+        try { currentUserId = GetCurrentUserId(); }
+        catch (UnauthorizedAccessException ex) { return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message }); }
+
+        _logger.LogInformation("User {UserId} attempting to unsubmit submission {SubmissionId}", currentUserId, submissionId);
+
+        var submission = await _context.AssignmentSubmissions
+           .Include(s => s.Assignment) // Need assignment for classroom check
+           .Include(s => s.Student)    // For response DTO
+           .Include(s => s.SubmittedFiles) // For response DTO
+           // GradedBy will be nulled, so no need to include it specifically for update
+           .FirstOrDefaultAsync(s => s.Id == submissionId);
+
+        if (submission == null)
+        {
+            _logger.LogWarning("Unsubmit failed: Submission {SubmissionId} not found.", submissionId);
+            return NotFound(new ProblemDetails { Title = "Submission Not Found", Detail = "The specified submission does not exist." });
+        }
+
+        if (submission.Assignment == null) // Should not happen with Include
+        {
+            _logger.LogError("Critical: Assignment data missing for submission {SubmissionId} during unsubmit attempt.", submissionId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Associated assignment data is missing."});
+        }
+
+        // Auth Check: Must be Owner/Teacher of the classroom this assignment belongs to
+        var userRole = await GetUserRoleInClassroom(currentUserId, submission.Assignment.ClassroomId);
+        if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
+        {
+            _logger.LogWarning("User {UserId} (Role: {UserRole}) forbidden from unsubmitting submission {SubmissionId} for assignment {AssignmentId}.",
+                currentUserId, userRole?.ToString() ?? "N/A", submissionId, submission.AssignmentId);
+            return Forbid();
+        }
+
+        // Check if there's anything to unsubmit
+        if (submission.SubmittedAt == null)
+        {
+            _logger.LogInformation("Submission {SubmissionId} is already in an 'in-progress' state (not turned in). No action taken.", submissionId);
+            // Optionally return BadRequest or just return the current state
+            // Returning current state might be confusing if frontend expects a change.
+            // Let's return BadRequest to indicate the action isn't applicable.
+            return BadRequest(new ProblemDetails { Title = "Invalid Operation", Detail = "This submission has not been turned in yet." });
+        }
+
+        // --- Perform the "Unsubmit" ---
+        submission.SubmittedAt = null;
+        submission.IsLate = false; // Reset late flag
+        submission.Grade = null;
+        submission.Feedback = null;
+        submission.GradedAt = null;
+        submission.GradedById = null;
+        // Note: We don't delete submitted files here. The student can manage them.
+
+        _context.Entry(submission).State = EntityState.Modified;
+
+        try
+        {
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("User {UserId} successfully unsubmitted submission {SubmissionId}.", currentUserId, submissionId);
+        }
+        catch (DbUpdateException dbEx)
+        {
+            _logger.LogError(dbEx, "Database error while unsubmitting submission {SubmissionId} by user {UserId}.", submissionId, currentUserId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not save changes to the submission." });
+        }
+
+        // Map to DTO to return the updated state
+        var responseDto = new SubmissionDto
+        {
+            Id = submission.Id,
+            AssignmentId = submission.AssignmentId,
+            StudentId = submission.StudentId,
+            StudentUsername = submission.Student?.Username ?? "N/A", // Student was included
+            SubmittedAt = submission.SubmittedAt, // Will be null now
+            IsLate = submission.IsLate,           // Will be false now
+            Grade = submission.Grade,             // Will be null now
+            Feedback = submission.Feedback,         // Will be null now
+            GradedAt = submission.GradedAt,           // Will be null now
+            GradedById = submission.GradedById,       // Will be null now
+            GradedByUsername = null,              // GradedBy would be null
+            SubmittedFiles = submission.SubmittedFiles.Select(file => new SubmittedFileDto
+            {
+                Id = file.Id,
+                FileName = file.FileName,
+                ContentType = string.IsNullOrEmpty(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                FileSize = file.FileSize,
+                UploadedAt = file.UploadedAt
+            }).ToList()
+        };
+
+        return Ok(responseDto);
     }
 }
