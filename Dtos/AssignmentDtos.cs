@@ -74,6 +74,12 @@ namespace WebCodeWork.Dtos
         public int? GradedById { get; set; }
         public string? GradedByUsername { get; set; }
         public List<SubmittedFileDto> SubmittedFiles { get; set; } = new List<SubmittedFileDto>();
+        public int? LastEvaluationPointsObtained { get; set; }
+        public int? LastEvaluationTotalPossiblePoints { get; set; }
+        public DateTime? LastEvaluatedAt { get; set; }
+        public string? LastEvaluationOverallStatus { get; set; }
+
+        public string? LastEvaluationDetailsJson { get; set; }
     }
 
     public class SubmissionSummaryDto // For lists shown to teachers

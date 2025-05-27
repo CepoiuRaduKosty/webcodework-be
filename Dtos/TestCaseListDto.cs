@@ -10,9 +10,10 @@ namespace WebCodeWork.Dtos
         public string ExpectedOutputFileName { get; set; } = string.Empty;
         public DateTime AddedAt { get; set; }
         public string AddedByUsername { get; set; } = string.Empty;
-        public int Points { get; set; } 
-        public int MaxExecutionTimeMs { get; set; } 
+        public int Points { get; set; }
+        public int MaxExecutionTimeMs { get; set; }
         public int MaxRamMB { get; set; }
+        public bool IsPrivate { get; set; }
     }
 
     // Used as response for POST /api/assignments/{assignmentId}/testcases
@@ -22,10 +23,10 @@ namespace WebCodeWork.Dtos
         public string InputFileName { get; set; } = string.Empty;
         public string ExpectedOutputFileName { get; set; } = string.Empty;
         public int Points { get; set; }
-        public int MaxExecutionTimeMs { get; set; } 
-        public int MaxRamMB { get; set; }  
+        public int MaxExecutionTimeMs { get; set; }
+        public int MaxRamMB { get; set; }
         public DateTime AddedAt { get; set; }
         public string AddedByUsername { get; set; } = string.Empty;
-        // Add other details if needed, like file paths (but generally not for client DTOs)
+        public bool IsPrivate { get; set; }
     }
 }

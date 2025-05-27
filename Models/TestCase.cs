@@ -56,6 +56,9 @@ namespace WebCodeWork.Models
         [Required]
         public int AddedById { get; set; } // FK to User (who added it)
 
+        [Required]
+        public bool IsPrivate { get; set; } = false;
+
         // Navigation Properties
         [ForeignKey(nameof(AssignmentId))]
         public virtual Assignment Assignment { get; set; } = null!;

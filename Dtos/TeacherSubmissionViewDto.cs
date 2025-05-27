@@ -16,5 +16,11 @@ namespace WebCodeWork.Dtos
         public int? Grade { get; set; }
         public bool HasFiles { get; set; } // Indicates if files were uploaded
         public string Status { get; set; } = "Not Submitted"; // Calculated status: Not Submitted, Submitted, Late, Graded
+        public int? LastEvaluationPointsObtained { get; set; }
+        public int? LastEvaluationTotalPossiblePoints { get; set; }
+        public DateTime? LastEvaluatedAt { get; set; }
+        public string? LastEvaluationOverallStatus { get; set; }
+
+        public string? LastEvaluationDetailsJson { get; set; }
     }
 }

@@ -29,6 +29,9 @@ namespace WebCodeWork.Dtos
         [Range(32, 512, ErrorMessage = "RAM limit must be between 32MB and 512MB.")]  // Example: 32MB to 512MB
         public int MaxRamMB { get; set; } = 128; // Default, matches model
 
+        [Required(ErrorMessage = "Is Private required")]
+        public bool IsPrivate { get; set; } = false;
+
         // Basic validation for filenames if provided without files
         public ValidationResult? ValidateFilenames(ValidationContext context)
         {

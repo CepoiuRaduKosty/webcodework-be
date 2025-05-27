@@ -140,7 +140,6 @@ public class SubmissionsController : ControllerBase
             Id = submission.Id,
             AssignmentId = submission.AssignmentId,
             StudentId = submission.StudentId,
-            // Ensure Student is not null (shouldn't be due to FK constraint, but good practice)
             StudentUsername = submission.Student?.Username ?? "N/A",
             SubmittedAt = submission.SubmittedAt,
             IsLate = submission.IsLate,
@@ -148,8 +147,12 @@ public class SubmissionsController : ControllerBase
             Feedback = submission.Feedback,
             GradedAt = submission.GradedAt,
             GradedById = submission.GradedById,
-            // Use null-conditional operator for GradedBy as it's nullable
-            GradedByUsername = submission.GradedBy?.Username, // Returns null if GradedBy is null
+            GradedByUsername = submission.GradedBy?.Username,
+            LastEvaluatedAt = submission.LastEvaluatedAt,
+            LastEvaluationDetailsJson = submission.LastEvaluationDetailsJson,
+            LastEvaluationOverallStatus = submission.LastEvaluationOverallStatus,
+            LastEvaluationPointsObtained = submission.LastEvaluationPointsObtained,
+            LastEvaluationTotalPossiblePoints = submission.LastEvaluationTotalPossiblePoints,
             SubmittedFiles = submission.SubmittedFiles.Select(file => new SubmittedFileDto
             {
                 Id = file.Id,
@@ -520,6 +523,11 @@ public class SubmissionsController : ControllerBase
                 s.SubmittedAt,
                 s.IsLate,
                 s.Grade,
+                s.LastEvaluatedAt,
+                s.LastEvaluationDetailsJson,
+                s.LastEvaluationOverallStatus,
+                s.LastEvaluationPointsObtained,
+                s.LastEvaluationTotalPossiblePoints,
                 HasFiles = s.SubmittedFiles.Any()
             })
             .ToDictionaryAsync(s => s.StudentId); // Key by StudentId
@@ -532,8 +540,7 @@ public class SubmissionsController : ControllerBase
             var studentView = new TeacherSubmissionViewDto
             {
                 StudentId = student.UserId,
-                StudentUsername = student.Username ?? "N/A"
-                // Default status is "Not Submitted"
+                StudentUsername = student.Username ?? "N/A",
             };
 
             // Check if this student has a submission in our dictionary
@@ -545,6 +552,11 @@ public class SubmissionsController : ControllerBase
                 studentView.IsLate = submissionInfo.IsLate;
                 studentView.Grade = submissionInfo.Grade;
                 studentView.HasFiles = submissionInfo.HasFiles;
+                studentView.LastEvaluatedAt = submissionInfo.LastEvaluatedAt;
+                studentView.LastEvaluationDetailsJson = submissionInfo.LastEvaluationDetailsJson;
+                studentView.LastEvaluationOverallStatus = submissionInfo.LastEvaluationOverallStatus;
+                studentView.LastEvaluationPointsObtained = submissionInfo.LastEvaluationPointsObtained;
+                studentView.LastEvaluationTotalPossiblePoints = submissionInfo.LastEvaluationTotalPossiblePoints;
 
                 // Determine Status string
                 if (submissionInfo.Grade.HasValue)

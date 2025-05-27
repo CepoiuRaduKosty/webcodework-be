@@ -333,7 +333,21 @@ namespace YourMainBackend.Controllers
 
                     foreach (var tc in signalRPayload.Results)
                     {
-                        tc.TestCaseName = submission.Assignment.TestCases.FirstOrDefault(t => t.Id.ToString() == tc.TestCaseId)?.InputFileName;
+                        var dbtc = submission.Assignment.TestCases.FirstOrDefault(t => t.Id.ToString() == tc.TestCaseId);
+                        if (dbtc!.IsPrivate)
+                        {
+                            tc.IsPrivate = true;
+                            tc.TestCaseInputPath = "";
+                            tc.Stdout = "";
+                            tc.Message = "";
+                            tc.TestCaseId = "";
+                            tc.Stderr = "";
+                        }
+                        else
+                        {
+                            tc.IsPrivate = false;
+                        }
+                        tc.TestCaseName = dbtc.InputFileName;
                     }
 
                     scopedLogger.LogInformation("[Background] Sending evaluation result via SignalR to User {UserId} for Submission {SubmissionId}. Points: {Obtained}/{Possible}",

@@ -522,7 +522,8 @@ public class AssignmentsController : ControllerBase
                 MaxExecutionTimeMs = dto.MaxExecutionTimeMs,
                 MaxRamMB = dto.MaxRamMB,
                 AddedAt = DateTime.UtcNow,
-                AddedById = currentUserId
+                AddedById = currentUserId,
+                IsPrivate = dto.IsPrivate,
             };
 
             _context.TestCases.Add(testCase);
@@ -542,17 +543,9 @@ public class AssignmentsController : ControllerBase
                 MaxExecutionTimeMs = testCase.MaxExecutionTimeMs,
                 MaxRamMB = testCase.MaxRamMB,
                 AddedAt = testCase.AddedAt,
-                AddedByUsername = addedBy?.Username ?? "N/A" // Handle if user somehow not found
+                AddedByUsername = addedBy?.Username ?? "N/A",
+                IsPrivate = testCase.IsPrivate,
             };
-            // --- End Map to DTO ---
-
-            // --- CreatedAtAction ---
-            // For CreatedAtAction to work, you need a "Get" endpoint for a single test case.
-            // Let's assume it would be in TestCasesController named "GetTestCaseById".
-            // If you don't have it yet, returning StatusCode(201, dto) is fine.
-            // For example:
-            // return CreatedAtAction("GetTestCaseById", "TestCases", new { testCaseId = testCase.Id }, responseDto);
-            // For now, if that endpoint doesn't exist:
             return StatusCode(StatusCodes.Status201Created, responseDto);
         }
         catch (Exception ex)
@@ -599,7 +592,8 @@ public class AssignmentsController : ControllerBase
                AddedByUsername = tc.AddedBy.Username ?? "N/A",
                Points = tc.Points,
                MaxExecutionTimeMs = tc.MaxExecutionTimeMs,
-               MaxRamMB = tc.MaxRamMB
+               MaxRamMB = tc.MaxRamMB,
+               IsPrivate = tc.IsPrivate,
            })
            .ToListAsync();
 
