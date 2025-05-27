@@ -29,4 +29,10 @@ namespace WebCodeWork.Dtos
         public string AddedByUsername { get; set; } = string.Empty;
         public bool IsPrivate { get; set; }
     }
+
+    public class UpdateTestCasePrivacyDto
+    {
+        [Required(ErrorMessage = "The IsPrivate field is required.")]
+        public bool IsPrivate { get; set; }
+    }
 }

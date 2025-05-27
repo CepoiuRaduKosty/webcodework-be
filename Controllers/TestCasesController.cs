@@ -37,106 +37,229 @@ namespace WebCodeWork.Controllers
             return userId;
         }
 
-        // Fetches TestCase and verifies user permission (Owner/Teacher)
-        private async Task<(TestCase? testCase, IActionResult? errorResult)> GetTestCaseAndVerifyAccess(int testCaseId, int currentUserId)
+        // Helper method to fetch TestCase and verify access (as defined previously)
+        private async Task<(TestCase? testCase, IActionResult? errorResult)> GetTestCaseAndVerifyAccess(int testCaseId, int currentUserId, bool trackEntity = false)
         {
-            var testCase = await _context.TestCases
-                .Include(tc => tc.Assignment) // Need Assignment for ClassroomId and IsCodeAssignment check
-                .FirstOrDefaultAsync(tc => tc.Id == testCaseId);
+            var query = _context.TestCases
+                .Include(tc => tc.Assignment)
+                    .ThenInclude(a => a!.Classroom) // For classroom ID
+                .AsQueryable();
+
+            if (!trackEntity)
+            {
+                query = query.AsNoTracking();
+            }
+
+            var testCase = await query.FirstOrDefaultAsync(tc => tc.Id == testCaseId);
 
             if (testCase == null)
             {
-                return (null, NotFound(new { message = "Test case not found." }));
+                return (null, NotFound(new ProblemDetails { Title = "Not Found", Detail = "Test case not found." }));
             }
-
-            // Verify IsCodeAssignment flag (redundant if only code assignments have test cases, but safe)
+            if (testCase.Assignment == null) // Should not happen with include
+            {
+                 _logger.LogError("Assignment data missing for test case {TestCaseId}", testCaseId);
+                 return (null, StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Associated assignment data is missing."}));
+            }
             if (!testCase.Assignment.IsCodeAssignment)
             {
                 _logger.LogWarning("Attempt to access test case {TestCaseId} for non-code assignment {AssignmentId}", testCaseId, testCase.AssignmentId);
-                // Treat as Not Found or Forbidden? Let's use Forbidden.
-                return (null, Forbid());
+                return (null, BadRequest(new ProblemDetails { Title = "Invalid Operation", Detail = "Test cases are only applicable to code assignments."}));
             }
 
-            // Verify user is Owner/Teacher in the classroom
             var userRole = await _context.ClassroomMembers
                                  .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == testCase.Assignment.ClassroomId)
-                                 .Select(cm => (ClassroomRole?)cm.Role) // Select nullable role
+                                 .Select(cm => (ClassroomRole?)cm.Role)
                                  .FirstOrDefaultAsync();
 
             if (userRole != ClassroomRole.Owner && userRole != ClassroomRole.Teacher)
             {
-                _logger.LogWarning("User {UserId} forbidden from accessing test case {TestCaseId}.", currentUserId, testCaseId);
+                _logger.LogWarning("User {UserId} (Role: {UserRole}) forbidden from accessing/modifying test case {TestCaseId}.",
+                    currentUserId, userRole?.ToString() ?? "None", testCaseId);
                 return (null, Forbid());
             }
 
-            return (testCase, null); // Success, return test case and no error
+            return (testCase, null); // Success
         }
+
 
 
         // --- Content Endpoints ---
 
-        // GET /api/testcases/{testCaseId}/input/content
         [HttpGet("{testCaseId}/input/content")]
         [Produces("text/plain")]
         [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(StatusCodes.Status403Forbidden)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetTestCaseInputContent(int testCaseId)
         {
             int currentUserId;
-            try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException ex) { return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message }); }
 
-            var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
-            if (errorResult != null) return errorResult;
-            // testCase is guaranteed not null here
+            _logger.LogDebug("User {UserId} attempting to get input content for test case {TestCaseId}", currentUserId, testCaseId);
 
+            // Fetch TestCase including Assignment for ClassroomId and IsCodeAssignment & IsPrivate status
+            var testCase = await _context.TestCases
+                .Include(tc => tc.Assignment) // Required for ClassroomId and IsCodeAssignment
+                .AsNoTracking() // Read-only for this operation
+                .FirstOrDefaultAsync(tc => tc.Id == testCaseId);
+
+            if (testCase == null)
+            {
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = "Test case not found." });
+            }
+            if (testCase.Assignment == null)
+            {
+                 _logger.LogError("Assignment data missing for test case {TestCaseId}", testCaseId);
+                 return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Associated assignment data is missing."});
+            }
+            if (!testCase.Assignment.IsCodeAssignment)
+            {
+                return BadRequest(new ProblemDetails { Title = "Invalid Assignment Type", Detail = "Test case content is only applicable to code assignments." });
+            }
+
+            // Get user's role in the classroom of this assignment
+            var userRole = await _context.ClassroomMembers
+                .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == testCase.Assignment.ClassroomId)
+                .Select(cm => (ClassroomRole?)cm.Role)
+                .FirstOrDefaultAsync();
+
+            // Authorization check
+            bool canAccessContent = false;
+            if (userRole == ClassroomRole.Owner || userRole == ClassroomRole.Teacher)
+            {
+                canAccessContent = true; // Owners and Teachers can access any test case content
+            }
+            else if (userRole == ClassroomRole.Student)
+            {
+                if (!testCase.IsPrivate) // Students can only access public test cases
+                {
+                    canAccessContent = true;
+                }
+                else
+                {
+                    _logger.LogWarning("Student {UserId} forbidden from accessing content of private test case {TestCaseId}.", currentUserId, testCaseId);
+                }
+            }
+
+            if (!canAccessContent)
+            {
+                // This covers non-members (userRole would be null) or students trying to access private cases.
+                 _logger.LogWarning("User {UserId} (Role: {UserRole}) access denied for content of test case {TestCaseId} (IsPrivate: {IsPrivate}).",
+                    currentUserId, userRole?.ToString() ?? "Not a member", testCaseId, testCase.IsPrivate);
+                return Forbid();
+            }
+
+            // Proceed to fetch file content
             var (fileStream, _, _) = await _fileService.GetTestCaseFileAsync(
-                testCase!.InputFilePath, // Use null-forgiving operator as testCase is checked
+                testCase.InputFilePath,
                 testCase.InputStoredFileName,
                 testCase.InputFileName
             );
 
-            if (fileStream == null) return NotFound(new { message = "Input file content not found in storage." });
+            if (fileStream == null)
+            {
+                _logger.LogError("Input file for TestCase {TestCaseId} not found in storage. Path: {Path}, StoredName: {StoredName}",
+                    testCaseId, testCase.InputFilePath, testCase.InputStoredFileName);
+                return NotFound(new ProblemDetails { Title = "File Not Found", Detail = "Input file content not found in storage." });
+            }
 
             string fileContent;
             try
             {
-                using (var reader = new StreamReader(fileStream, Encoding.UTF8)) { fileContent = await reader.ReadToEndAsync(); }
+                using (var reader = new StreamReader(fileStream, Encoding.UTF8))
+                {
+                    fileContent = await reader.ReadToEndAsync();
+                }
             }
-            catch (Exception ex) { /* Log error, return 500 */ return StatusCode(500); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reading input content stream for test case {TestCaseId}", testCaseId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "File Read Error", Detail = "Error reading file content." });
+            }
 
             return Content(fileContent, "text/plain", Encoding.UTF8);
         }
 
-        // GET /api/testcases/{testCaseId}/output/content
+        // --- MODIFIED Endpoint: Get Test Case Output Content ---
         [HttpGet("{testCaseId}/output/content")]
         [Produces("text/plain")]
         [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
-        // ... other response types ...
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetTestCaseOutputContent(int testCaseId)
         {
             int currentUserId;
-            try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException ex) { return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message }); }
 
-            var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
-            if (errorResult != null) return errorResult;
+            _logger.LogDebug("User {UserId} attempting to get output content for test case {TestCaseId}", currentUserId, testCaseId);
+
+            var testCase = await _context.TestCases
+                .Include(tc => tc.Assignment)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(tc => tc.Id == testCaseId);
+
+            if (testCase == null)
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = "Test case not found." });
+            if (testCase.Assignment == null)
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Associated assignment data is missing."});
+            if (!testCase.Assignment.IsCodeAssignment)
+                return BadRequest(new ProblemDetails { Title = "Invalid Assignment Type", Detail = "Test case content is only applicable to code assignments." });
+
+            var userRole = await _context.ClassroomMembers
+                .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == testCase.Assignment.ClassroomId)
+                .Select(cm => (ClassroomRole?)cm.Role)
+                .FirstOrDefaultAsync();
+
+            bool canAccessContent = false;
+            if (userRole == ClassroomRole.Owner || userRole == ClassroomRole.Teacher)
+            {
+                canAccessContent = true;
+            }
+            else if (userRole == ClassroomRole.Student)
+            {
+                if (!testCase.IsPrivate) canAccessContent = true;
+                else _logger.LogWarning("Student {UserId} forbidden from accessing content of private test case {TestCaseId}.", currentUserId, testCaseId);
+            }
+
+            if (!canAccessContent)
+            {
+                 _logger.LogWarning("User {UserId} (Role: {UserRole}) access denied for content of test case {TestCaseId} (IsPrivate: {IsPrivate}).",
+                    currentUserId, userRole?.ToString() ?? "Not a member", testCaseId, testCase.IsPrivate);
+                return Forbid();
+            }
 
             var (fileStream, _, _) = await _fileService.GetTestCaseFileAsync(
-                testCase!.ExpectedOutputFilePath,
+                testCase.ExpectedOutputFilePath,
                 testCase.ExpectedOutputStoredFileName,
                 testCase.ExpectedOutputFileName
             );
 
-            if (fileStream == null) return NotFound(new { message = "Expected output file content not found in storage." });
+            if (fileStream == null)
+            {
+                 _logger.LogError("Output file for TestCase {TestCaseId} not found in storage. Path: {Path}, StoredName: {StoredName}",
+                    testCaseId, testCase.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName);
+                return NotFound(new ProblemDetails { Title = "File Not Found", Detail = "Expected output file content not found in storage." });
+            }
 
             string fileContent;
             try
             {
                 using (var reader = new StreamReader(fileStream, Encoding.UTF8)) { fileContent = await reader.ReadToEndAsync(); }
             }
-            catch (Exception ex) { /* Log error, return 500 */ return StatusCode(500); }
+            catch (Exception ex)
+            {
+                 _logger.LogError(ex, "Error reading output content stream for test case {TestCaseId}", testCaseId);
+                 return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "File Read Error", Detail = "Error reading file content." });
+            }
 
             return Content(fileContent, "text/plain", Encoding.UTF8);
         }
@@ -215,6 +338,63 @@ namespace WebCodeWork.Controllers
             // Update DB? (e.g., file size, modified date if tracking) - Optional for now
 
             return NoContent();
+        }
+
+        [HttpPatch("{testCaseId}/privacy")] // Using PATCH for partial update
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> UpdateTestCasePrivacy(int testCaseId, [FromBody] UpdateTestCasePrivacyDto dto)
+        {
+            if (!ModelState.IsValid) // Validates [Required] on dto.IsPrivate
+            {
+                return ValidationProblem(ModelState);
+            }
+
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException) { return Unauthorized(); }
+
+            _logger.LogInformation("User {UserId} attempting to update privacy for test case {TestCaseId} to IsPrivate={IsPrivate}",
+                currentUserId, testCaseId, dto.IsPrivate);
+
+            // Fetch the test case for update (track it) and verify access
+            var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId, trackEntity: true);
+            if (errorResult != null)
+            {
+                return errorResult;
+            }
+            // testCase is guaranteed not null here by GetTestCaseAndVerifyAccess logic
+
+            if (testCase!.IsPrivate == dto.IsPrivate)
+            {
+                _logger.LogInformation("Privacy for test case {TestCaseId} already set to {IsPrivate}. No change made.", testCaseId, dto.IsPrivate);
+                return NoContent(); // No change needed
+            }
+
+            testCase.IsPrivate = dto.IsPrivate;
+            // _context.TestCases.Update(testCase); // or _context.Entry(testCase).State = EntityState.Modified; (EF Core tracks changes on fetched entities)
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Successfully updated privacy for test case {TestCaseId} to IsPrivate={IsPrivate} by User {UserId}",
+                    testCaseId, dto.IsPrivate, currentUserId);
+                return NoContent(); // Success
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogError(ex, "Concurrency error while updating privacy for test case {TestCaseId}.", testCaseId);
+                return Conflict(new ProblemDetails { Title = "Conflict", Detail = "The test case was modified by another user. Please refresh and try again."});
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Database error while updating privacy for test case {TestCaseId}.", testCaseId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not update test case privacy." });
+            }
         }
     }
 }

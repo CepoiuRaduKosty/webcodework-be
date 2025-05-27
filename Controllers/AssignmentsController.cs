@@ -553,49 +553,106 @@ public class AssignmentsController : ControllerBase
             _logger.LogError(ex, "Error adding test case for assignment {AssignmentId}", assignmentId);
             if (inputSaved && !string.IsNullOrEmpty(inputPath) && !string.IsNullOrEmpty(inputStoredName))
             {
-                 // Best effort cleanup of already saved input file if subsequent steps fail
-                 await _fileService.DeleteTestCaseFileAsync(inputPath, inputStoredName);
+                // Best effort cleanup of already saved input file if subsequent steps fail
+                await _fileService.DeleteTestCaseFileAsync(inputPath, inputStoredName);
             }
             // Note: If output file was saved but DB failed, it won't be cleaned up here. More complex transaction management would be needed.
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred while adding the test case." });
         }
     }
 
-    // GET /api/assignments/{assignmentId}/testcases - List Test Cases
+
+    // GET /api/assignments/{assignmentId}/testcases - List Test Cases (MODIFIED)
     [HttpGet("assignments/{assignmentId}/testcases")]
     [ProducesResponseType(typeof(IEnumerable<TestCaseListDto>), StatusCodes.Status200OK)]
-    // ... other response types ...
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> GetTestCases(int assignmentId)
     {
         int currentUserId;
-        try { currentUserId = GetCurrentUserId(); } catch { return Unauthorized(); }
+        try { currentUserId = GetCurrentUserId(); }
+        catch (UnauthorizedAccessException ex) { return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message }); }
 
-        // Auth Check: Must be Owner/Teacher and IsCodeAssignment
-        if (!await CanUserManageAssignmentTestCases(currentUserId, assignmentId))
+        _logger.LogInformation("User {UserId} attempting to get test cases for assignment {AssignmentId}", currentUserId, assignmentId);
+
+        // 1. Fetch Assignment details to check IsCodeAssignment and ClassroomId
+        var assignment = await _context.Assignments
+                                      .AsNoTracking() // Read-only for this check
+                                      .Select(a => new { a.Id, a.ClassroomId, a.IsCodeAssignment }) // Select only what's needed
+                                      .FirstOrDefaultAsync(a => a.Id == assignmentId);
+
+        if (assignment == null)
         {
-            // Need to differentiate between forbidden and assignment not found/not code assignment
-            var assignmentExists = await _context.Assignments.AnyAsync(a => a.Id == assignmentId);
-            if (!assignmentExists) return NotFound(new { message = "Assignment not found." });
+            return NotFound(new ProblemDetails { Title = "Not Found", Detail = "Assignment not found." });
+        }
+
+        if (!assignment.IsCodeAssignment)
+        {
+            return BadRequest(new ProblemDetails { Title = "Invalid Assignment Type", Detail = "Test cases are only applicable to code assignments." });
+        }
+
+        // 2. Check if the current user is a member of the classroom this assignment belongs to
+        //    and get their role.
+        var userMembership = await _context.ClassroomMembers
+            .AsNoTracking() // Read-only for this check
+            .FirstOrDefaultAsync(cm => cm.UserId == currentUserId && cm.ClassroomId == assignment.ClassroomId);
+
+        if (userMembership == null)
+        {
+            // User is not a member of the classroom for this assignment
+            _logger.LogWarning("User {UserId} is not a member of classroom {ClassroomId} and cannot view test cases for assignment {AssignmentId}.",
+                currentUserId, assignment.ClassroomId, assignmentId);
             return Forbid();
         }
 
-        var testCases = await _context.TestCases
-           .Where(tc => tc.AssignmentId == assignmentId)
+        var userRoleInClassroom = userMembership.Role; // Role of the current user in this classroom
+
+        // 3. Build the base query for test cases
+        IQueryable<TestCase> query = _context.TestCases
+           .AsNoTracking()
+           .Where(tc => tc.AssignmentId == assignmentId);
+
+        // 4. Apply privacy filter if the user is a Student
+        if (userRoleInClassroom == ClassroomRole.Student)
+        {
+            _logger.LogInformation("User {UserId} is a Student. Filtering for public test cases for assignment {AssignmentId}.", currentUserId, assignmentId);
+            query = query.Where(tc => !tc.IsPrivate); // Only show non-private test cases to students
+        }
+        else if (userRoleInClassroom == ClassroomRole.Owner || userRoleInClassroom == ClassroomRole.Teacher)
+        {
+            _logger.LogInformation("User {UserId} is an Owner/Teacher. Fetching all test cases for assignment {AssignmentId}.", currentUserId, assignmentId);
+            // Owners and Teachers see all test cases (public and private) - no additional filter needed here.
+        }
+        else
+        {
+            // This case should ideally not be reached if userMembership was found and role is valid.
+            _logger.LogWarning("User {UserId} has an unrecognized role ({UserRole}) in classroom {ClassroomId}. Denying access to test cases for assignment {AssignmentId}.",
+                currentUserId, userRoleInClassroom, assignment.ClassroomId, assignmentId);
+            return Forbid(); // Or handle as an internal error if roles should always be valid
+        }
+
+        // 5. Execute the query and map to DTO
+        var testCases = await query
            .Include(tc => tc.AddedBy) // Include user for username
-           .OrderBy(tc => tc.AddedAt) // Or by name?
+           .OrderBy(tc => tc.AddedAt) // Or by another criteria like InputFileName or Points
            .Select(tc => new TestCaseListDto
            {
                Id = tc.Id,
                InputFileName = tc.InputFileName,
                ExpectedOutputFileName = tc.ExpectedOutputFileName,
                AddedAt = tc.AddedAt,
-               AddedByUsername = tc.AddedBy.Username ?? "N/A",
+               AddedByUsername = tc.AddedBy.Username ?? "N/A", // Handle potential null on User navigation
                Points = tc.Points,
                MaxExecutionTimeMs = tc.MaxExecutionTimeMs,
                MaxRamMB = tc.MaxRamMB,
-               IsPrivate = tc.IsPrivate,
+               IsPrivate = tc.IsPrivate // Always include this; frontend can decide further if needed
            })
            .ToListAsync();
+
+        _logger.LogInformation("Returning {Count} test cases for assignment {AssignmentId} to user {UserId} with role {UserRole}.",
+            testCases.Count, assignmentId, currentUserId, userRoleInClassroom);
 
         return Ok(testCases);
     }
