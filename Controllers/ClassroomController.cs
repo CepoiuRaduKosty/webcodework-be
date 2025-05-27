@@ -689,7 +689,7 @@ namespace WebCodeWork.Controllers
                 return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not update classroom details." });
             }
         }
-        
+
         [HttpGet("{classroomId}/potential-members/search")]
         [ProducesResponseType(typeof(IEnumerable<UserSearchResultDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
@@ -726,23 +726,258 @@ namespace WebCodeWork.Controllers
             var existingMemberIds = await _context.ClassroomMembers
                 .Where(cm => cm.ClassroomId == classroomId)
                 .Select(cm => cm.UserId)
-                .Distinct() 
+                .Distinct()
                 .ToListAsync();
 
             var potentialMembers = await _context.Users
                 .Where(u => u.Username.ToLower().Contains(searchTerm.ToLower()))
-                .Where(u => !existingMemberIds.Contains(u.Id)) 
-                .OrderBy(u => u.Username) 
-                .Take(limit)            
+                .Where(u => !existingMemberIds.Contains(u.Id))
+                .OrderBy(u => u.Username)
+                .Take(limit)
                 .Select(u => new UserSearchResultDto
                 {
                     UserId = u.Id,
                     Username = u.Username,
-                    ProfilePhotoUrl = _fileService.GetPublicUserProfilePhotoUrl(u.ProfilePhotoPath!, u.ProfilePhotoStoredName!) 
+                    ProfilePhotoUrl = _fileService.GetPublicUserProfilePhotoUrl(u.ProfilePhotoPath!, u.ProfilePhotoStoredName!)
                 })
                 .ToListAsync();
 
             return Ok(potentialMembers);
+        }
+
+        [HttpPost("{classroomId}/leave")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> LeaveClassroom(int classroomId, [FromBody] LeaveClassroomRequestDto leaveRequestDto)
+        {
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException ex) { return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message }); }
+
+            _logger.LogInformation("User {UserId} attempting to leave classroom {ClassroomId}", currentUserId, classroomId);
+
+            // It's often good to perform read-only checks and validations *before* entering the execution strategy block,
+            // especially if these checks don't need to be part of the retryable transaction itself.
+            var classroomForValidation = await _context.Classrooms
+                .Include(c => c.Members)
+                .AsNoTracking() // Use AsNoTracking for read-only validation queries
+                .FirstOrDefaultAsync(c => c.Id == classroomId);
+
+            if (classroomForValidation == null)
+            {
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = $"Classroom with ID {classroomId} not found." });
+            }
+
+            var currentUserMembershipForValidation = classroomForValidation.Members.FirstOrDefault(m => m.UserId == currentUserId);
+
+            if (currentUserMembershipForValidation == null)
+            {
+                return BadRequest(new ProblemDetails { Title = "Not a Member", Detail = "You are not a member of this classroom." });
+            }
+
+            if (currentUserMembershipForValidation.Role == ClassroomRole.Owner)
+            {
+                var teachersInClassroom = classroomForValidation.Members
+                    .Where(m => m.Role == ClassroomRole.Teacher && m.UserId != currentUserId)
+                    .ToList();
+
+                if (!teachersInClassroom.Any())
+                {
+                    var otherMembersCount = classroomForValidation.Members.Count(m => m.UserId != currentUserId);
+                    if (otherMembersCount > 0)
+                    {
+                        return BadRequest(new ProblemDetails { Title = "Ownership Transfer Required", Detail = "You are the owner. To leave, you must first promote a teacher to owner, or delete the classroom if no other teachers exist." });
+                    }
+                    return BadRequest(new ProblemDetails { Title = "Cannot Leave", Detail = "As the sole owner and member, please delete the classroom instead of leaving." });
+                }
+                if (leaveRequestDto.NewOwnerUserId == null)
+                {
+                    ModelState.AddModelError(nameof(leaveRequestDto.NewOwnerUserId), "As the current owner, you must specify a teacher to become the new owner.");
+                    return ValidationProblem(ModelState);
+                }
+                if (leaveRequestDto.NewOwnerUserId.Value == currentUserId)
+                {
+                    ModelState.AddModelError(nameof(leaveRequestDto.NewOwnerUserId), "You cannot transfer ownership to yourself.");
+                    return ValidationProblem(ModelState);
+                }
+                var newOwnerProspect = teachersInClassroom.FirstOrDefault(t => t.UserId == leaveRequestDto.NewOwnerUserId.Value);
+                if (newOwnerProspect == null)
+                {
+                    ModelState.AddModelError(nameof(leaveRequestDto.NewOwnerUserId), "The specified user is not a teacher in this classroom or does not exist.");
+                    return ValidationProblem(ModelState);
+                }
+            }
+
+            // --- Use the Execution Strategy for database modifications ---
+            var strategy = _context.Database.CreateExecutionStrategy();
+            try
+            {
+                // ExecuteAsync will run the lambda, and if a transient error occurs,
+                // it will retry the *entire* lambda (including starting a new transaction).
+                return await strategy.ExecuteAsync(async () =>
+                {
+                    // Start a transaction *inside* the strategy's execution block.
+                    // This transaction is now managed by the retry logic of the strategy.
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+
+                    // Re-fetch entities that need to be modified *within* the transaction
+                    // to ensure they are tracked by the current DbContext scope for this attempt.
+                    var classroom = await _context.Classrooms
+                        .Include(c => c.Members)
+                        .FirstOrDefaultAsync(c => c.Id == classroomId);
+
+                    // Defensive checks - these should ideally not fail if outer checks passed,
+                    // but good if state could change between outer check and strategy execution.
+                    if (classroom == null) throw new InvalidOperationException("Classroom disappeared mid-operation.");
+                    var currentUserMembership = classroom.Members.FirstOrDefault(m => m.UserId == currentUserId);
+                    if (currentUserMembership == null) throw new InvalidOperationException("User membership disappeared mid-operation.");
+
+
+                    if (currentUserMembership.Role == ClassroomRole.Owner)
+                    {
+                        _logger.LogInformation("User {UserId} is Owner of classroom {ClassroomId}. Attempting owner transition within strategy.", currentUserId, classroomId);
+
+                        var newOwnerMembership = classroom.Members.FirstOrDefault(t => t.UserId == leaveRequestDto.NewOwnerUserId!.Value); // Already validated it's a teacher
+
+                        if (newOwnerMembership == null || newOwnerMembership.Role != ClassroomRole.Teacher) // Defensive re-check
+                        {
+                            // This indicates an unexpected state change or flaw in initial validation
+                            _logger.LogError("New owner candidate {NewOwnerId} is not a teacher or not found during transaction for classroom {ClassroomId}.", leaveRequestDto.NewOwnerUserId!.Value, classroomId);
+                            throw new InvalidOperationException("Selected new owner is no longer a valid teacher.");
+                        }
+
+                        newOwnerMembership.Role = ClassroomRole.Owner;
+                        _context.ClassroomMembers.Update(newOwnerMembership);
+                        _logger.LogInformation("User {NewOwnerId} promoted to Owner for classroom {ClassroomId}.", newOwnerMembership.UserId, classroomId);
+
+                        _context.ClassroomMembers.Remove(currentUserMembership);
+                        _logger.LogInformation("Previous owner {OldOwnerId} removed from classroom {ClassroomId}.", currentUserMembership.UserId, classroomId);
+                    }
+                    else // User is a Teacher or Student
+                    {
+                        _logger.LogInformation("User {UserId} (Role: {Role}) leaving classroom {ClassroomId} within strategy.", currentUserId, currentUserMembership.Role, classroomId);
+                        _context.ClassroomMembers.Remove(currentUserMembership);
+                    }
+
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+
+                    _logger.LogInformation("User {UserId} successfully left/transferred ownership of classroom {ClassroomId}.", currentUserId, classroomId);
+                    // Cast to IActionResult because ExecuteAsync expects a func that returns TResult
+                    return NoContent() as IActionResult;
+                });
+            }
+            catch (InvalidOperationException ex) // Catch specific errors you might throw inside the strategy
+            {
+                _logger.LogError(ex, "Invalid operation during LeaveClassroom for classroom {ClassroomId} by user {UserId}.", classroomId, currentUserId);
+                return BadRequest(new ProblemDetails { Title = "Operation Error", Detail = ex.Message });
+            }
+            catch (Exception ex) // Catch other exceptions that might propagate from ExecuteAsync (e.g., after retries fail)
+            {
+                _logger.LogError(ex, "Unhandled error during LeaveClassroom strategy execution for classroom {ClassroomId} by user {UserId}.", classroomId, currentUserId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Operation Failed", Detail = "An error occurred while processing your request." });
+            }
+        }
+
+        [HttpDelete("{classroomId}/members/{memberUserIdToRemove}")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> RemoveMemberFromClassroom(int classroomId, int memberUserIdToRemove)
+        {
+            int currentUserId;
+            try { currentUserId = GetCurrentUserId(); }
+            catch (UnauthorizedAccessException ex) { return Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = ex.Message }); }
+
+            _logger.LogInformation("User {CurrentUserId} attempting to remove member {MemberUserIdToRemove} from classroom {ClassroomId}",
+                currentUserId, memberUserIdToRemove, classroomId);
+
+            // Check if classroom exists
+            var classroom = await _context.Classrooms.FindAsync(classroomId);
+            if (classroom == null)
+            {
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = $"Classroom with ID {classroomId} not found." });
+            }
+
+            // Prevent removing oneself using this endpoint; use the /leave endpoint instead.
+            if (currentUserId == memberUserIdToRemove)
+            {
+                return BadRequest(new ProblemDetails { Title = "Invalid Operation", Detail = "Cannot remove yourself using this endpoint. Please use the 'leave classroom' functionality." });
+            }
+
+            // Get the role of the current user (the one performing the action)
+            var currentUserRoleInClassroom = await GetUserRoleInClassroom(currentUserId, classroomId);
+            if (currentUserRoleInClassroom == null)
+            {
+                // Current user is not even a member of this classroom
+                _logger.LogWarning("User {CurrentUserId} is not a member of classroom {ClassroomId} and cannot remove others.", currentUserId, classroomId);
+                return Forbid();
+            }
+
+            // Get the membership record of the user to be removed
+            var targetMembership = await _context.ClassroomMembers
+                .FirstOrDefaultAsync(cm => cm.ClassroomId == classroomId && cm.UserId == memberUserIdToRemove);
+
+            if (targetMembership == null)
+            {
+                return NotFound(new ProblemDetails { Title = "Not Found", Detail = $"Member with User ID {memberUserIdToRemove} not found in classroom {classroomId}." });
+            }
+
+            // --- Authorization Logic ---
+            bool canRemove = false;
+
+            // Owners can remove Teachers and Students
+            if (currentUserRoleInClassroom == ClassroomRole.Owner)
+            {
+                if (targetMembership.Role == ClassroomRole.Teacher || targetMembership.Role == ClassroomRole.Student)
+                {
+                    canRemove = true;
+                }
+                else if (targetMembership.Role == ClassroomRole.Owner)
+                {
+                    // This should ideally not happen if there's only one owner,
+                    // or if it's the current user (already handled).
+                    // If multiple owners were possible, this would be relevant.
+                    // For now, owners cannot remove other owners via this endpoint.
+                    return BadRequest(new ProblemDetails { Title = "Invalid Operation", Detail = "Owners cannot be removed using this endpoint. Ownership must be transferred or the classroom deleted by an owner." });
+                }
+            }
+            // Teachers can remove Students
+            else if (currentUserRoleInClassroom == ClassroomRole.Teacher)
+            {
+                if (targetMembership.Role == ClassroomRole.Student)
+                {
+                    canRemove = true;
+                }
+            }
+            // Students cannot remove anyone (currentUserRoleInClassroom would be Student)
+
+            if (!canRemove)
+            {
+                _logger.LogWarning("User {CurrentUserId} (Role: {CurrentUserRole}) is not authorized to remove member {MemberUserIdToRemove} (Role: {TargetUserRole}) from classroom {ClassroomId}.",
+                    currentUserId, currentUserRoleInClassroom, memberUserIdToRemove, targetMembership.Role, classroomId);
+                return Forbid();
+            }
+
+            // Proceed with removal
+            try
+            {
+                _context.ClassroomMembers.Remove(targetMembership);
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Member {MemberUserIdToRemove} successfully removed from classroom {ClassroomId} by user {CurrentUserId}.",
+                    memberUserIdToRemove, classroomId, currentUserId);
+                return NoContent();
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Database error while removing member {MemberUserIdToRemove} from classroom {ClassroomId}.", memberUserIdToRemove, classroomId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Database Error", Detail = "Could not remove member from the classroom." });
+            }
         }
     }
 }

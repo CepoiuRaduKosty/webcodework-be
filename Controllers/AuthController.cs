@@ -174,7 +174,8 @@ namespace YourProjectName.Controllers
             {
                 Token = tokenString,
                 Username = user.Username,
-                Expiration = expiration
+                Expiration = expiration,
+                Id = user.Id,
             });
         }
 
