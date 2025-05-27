@@ -13,11 +13,18 @@ namespace WebCodeWork.Dtos
         public int? MaxPoints { get; set; }
 
         public bool IsCodeAssignment { get; set; } = false;
-        
+
     }
 
-    public class UpdateAssignmentDto : CreateAssignmentDto // Can inherit or be separate
-    { }
+    public class UpdateAssignmentDto
+    {
+        [Required]
+        [MaxLength(200)]
+        public string Title { get; set; } = string.Empty;
+        public string? Instructions { get; set; }
+        public DateTime? DueDate { get; set; }
+        public int? MaxPoints { get; set; }
+    }
 
     public class AssignmentBasicDto // For lists
     {

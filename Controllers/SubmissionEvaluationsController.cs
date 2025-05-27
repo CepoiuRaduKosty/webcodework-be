@@ -206,7 +206,7 @@ namespace YourMainBackend.Controllers
                             ExpectedOutputFilePath = Path.Combine(tc.ExpectedOutputFilePath, tc.ExpectedOutputStoredFileName).Replace("\\", "/"),
                             MaxExecutionTimeMs = tc.MaxExecutionTimeMs,
                             MaxRamMB = tc.MaxRamMB,
-                            TestCaseId = tc.Id.ToString()
+                            TestCaseId = tc.Id.ToString(),
                         }).ToList()
                     };
 
@@ -326,10 +326,15 @@ namespace YourMainBackend.Controllers
                         OverallStatus = orchestratorResponse?.OverallStatus ?? EvaluationStatus.InternalError,
                         CompilationSuccess = orchestratorResponse?.CompilationSuccess ?? false,
                         CompilerOutput = orchestratorResponse?.CompilerOutput,
-                        Results = orchestratorResponse?.Results ?? new List<CodeRunnerTestCaseResult>(), // Send empty list if null
+                        Results = orchestratorResponse?.Results ?? new List<CodeRunnerTestCaseResult>(),
                         PointsObtained = pointsObtained,
-                        TotalPossiblePoints = totalPossiblePoints
+                        TotalPossiblePoints = totalPossiblePoints,
                     };
+
+                    foreach (var tc in signalRPayload.Results)
+                    {
+                        tc.TestCaseName = submission.Assignment.TestCases.FirstOrDefault(t => t.Id.ToString() == tc.TestCaseId)?.InputFileName;
+                    }
 
                     scopedLogger.LogInformation("[Background] Sending evaluation result via SignalR to User {UserId} for Submission {SubmissionId}. Points: {Obtained}/{Possible}",
                         currentUserIdString, submissionId, pointsObtained, totalPossiblePoints);

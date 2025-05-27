@@ -292,18 +292,11 @@ public class AssignmentsController : ControllerBase
             return Forbid();
         }
 
-        // Prevent changing IsCodeAssignment if test cases exist? Optional check.
-        if (assignment.IsCodeAssignment != dto.IsCodeAssignment && await _context.TestCases.AnyAsync(tc => tc.AssignmentId == assignmentId))
-        {
-            return BadRequest(new { message = "Cannot change the assignment type (code/non-code) when test cases already exist." });
-        }
-
         // Update fields
         assignment.Title = dto.Title;
         assignment.Instructions = dto.Instructions;
         assignment.DueDate = dto.DueDate?.ToUniversalTime();
         assignment.MaxPoints = dto.MaxPoints;
-        assignment.IsCodeAssignment = dto.IsCodeAssignment;
 
         _context.Entry(assignment).State = EntityState.Modified;
         await _context.SaveChangesAsync();

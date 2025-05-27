@@ -73,7 +73,7 @@ namespace WebCodeWork.Data
                 .HasOne(a => a.CreatedBy)
                 .WithMany() // Assuming User doesn't need direct nav prop back to created assignments
                 .HasForeignKey(a => a.CreatedById)
-                .OnDelete(DeleteBehavior.Restrict); // Prevent deleting user if they created assignments? Or SetNull?
+                .OnDelete(DeleteBehavior.SetNull); // Prevent deleting user if they created assignments? Or SetNull?
 
             modelBuilder.Entity<AssignmentSubmission>()
                .HasOne(s => s.Assignment)
@@ -111,7 +111,7 @@ namespace WebCodeWork.Data
                 .HasOne(tc => tc.AddedBy)
                 .WithMany() // Assuming User doesn't need direct nav prop back to test cases they added
                 .HasForeignKey(tc => tc.AddedById)
-                .OnDelete(DeleteBehavior.Restrict); // Prevent deleting user if they added test cases? Or SetNull?
+                .OnDelete(DeleteBehavior.SetNull); // Prevent deleting user if they added test cases? Or SetNull?
         }
     }
 }

@@ -41,6 +41,7 @@ namespace WebCodeWork.Dtos // Adjust namespace as needed
         public string? Message { get; set; }
         public long? DurationMs { get; set; }
         public bool MaximumMemoryException { get; set; }
+        public string? TestCaseName { get; set; }
     }
 
     public class CodeRunnerEvaluateResponse
