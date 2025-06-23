@@ -1,4 +1,4 @@
-// Hubs/EvaluationHub.cs (in your Main Backend project)
+
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.Authorization;
 

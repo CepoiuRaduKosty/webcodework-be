@@ -1,4 +1,4 @@
-// Dtos/UpdateClassroomDto.cs (or add to an existing Classroom DTO file)
+
 using System.ComponentModel.DataAnnotations;
 
 namespace WebCodeWork.Dtos

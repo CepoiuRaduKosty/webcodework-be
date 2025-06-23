@@ -1,4 +1,4 @@
-// Dtos/UserClassroomDto.cs
+
 using WebCodeWork.Enums;
 
 namespace WebCodeWork.Dtos

@@ -1,4 +1,4 @@
-// Dtos/CreateClassroomDto.cs
+
 using System.ComponentModel.DataAnnotations;
 
 namespace WebCodeWork.Dtos

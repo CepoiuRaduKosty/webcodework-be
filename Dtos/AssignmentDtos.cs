@@ -1,4 +1,4 @@
-// Dtos/AssignmentDtos.cs
+
 using System.ComponentModel.DataAnnotations;
 
 namespace WebCodeWork.Dtos
@@ -26,19 +26,19 @@ namespace WebCodeWork.Dtos
         public int? MaxPoints { get; set; }
     }
 
-    public class AssignmentBasicDto // For lists
+    public class AssignmentBasicDto 
     {
         public int Id { get; set; }
         public string Title { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
         public DateTime? DueDate { get; set; }
         public int? MaxPoints { get; set; }
-        // Add submission status for current user if needed
-        public string? SubmissionStatus { get; set; } // e.g., "Not Submitted", "Submitted", "Late", "Graded"
+        
+        public string? SubmissionStatus { get; set; } 
         public bool IsCodeAssignment { get; set; }
     }
 
-    public class AssignmentDetailsDto : AssignmentBasicDto // For detail view
+    public class AssignmentDetailsDto : AssignmentBasicDto 
     {
         public string? Instructions { get; set; }
         public int CreatedById { get; set; }
@@ -47,7 +47,7 @@ namespace WebCodeWork.Dtos
     }
 }
 
-// Dtos/SubmissionDtos.cs
+
 namespace WebCodeWork.Dtos
 {
     public class SubmittedFileDto
@@ -57,10 +57,10 @@ namespace WebCodeWork.Dtos
         public string ContentType { get; set; } = string.Empty;
         public long FileSize { get; set; }
         public DateTime UploadedAt { get; set; }
-        // Avoid sending back stored path/name unless necessary for download URLs
+        
     }
 
-    public class SubmissionDto // For viewing a specific submission
+    public class SubmissionDto 
     {
         public int Id { get; set; }
         public int AssignmentId { get; set; }
@@ -83,7 +83,7 @@ namespace WebCodeWork.Dtos
         public string? LastEvaluatedLanguage { get; set; }
     }
 
-    public class SubmissionSummaryDto // For lists shown to teachers
+    public class SubmissionSummaryDto 
     {
         public int Id { get; set; }
         public int StudentId { get; set; }
@@ -91,12 +91,12 @@ namespace WebCodeWork.Dtos
         public DateTime? SubmittedAt { get; set; }
         public bool IsLate { get; set; }
         public int? Grade { get; set; }
-        public bool HasFiles { get; set; } // Indicate if files exist without fetching all details
+        public bool HasFiles { get; set; } 
     }
 
     public class GradeSubmissionDto
     {
-        // Use nullable types to allow partial updates (only grade or only feedback)
+        
         public int? Grade { get; set; }
         public string? Feedback { get; set; }
     }

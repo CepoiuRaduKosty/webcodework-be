@@ -9,7 +9,7 @@ namespace WebCodeWork.Dtos
         public string Username { get; set; } = string.Empty;
 
         [Required]
-        [MinLength(6)] // Example minimum length
+        [MinLength(6)] 
         public string Password { get; set; } = string.Empty;
     }
 

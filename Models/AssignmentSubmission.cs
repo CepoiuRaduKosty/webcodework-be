@@ -9,19 +9,19 @@ namespace WebCodeWork.Models
         public int Id { get; set; }
 
         [Required]
-        public int AssignmentId { get; set; } // FK to Assignment
+        public int AssignmentId { get; set; } 
 
         [Required]
-        public int StudentId { get; set; } // FK to User (Student who submitted)
+        public int StudentId { get; set; } 
 
-        public DateTime? SubmittedAt { get; set; } // Nullable: Timestamp when student marked as 'Done'
-        public bool IsLate { get; set; } = false; // Determined at submission time based on DueDate
+        public DateTime? SubmittedAt { get; set; } 
+        public bool IsLate { get; set; } = false; 
 
-        // Grading related fields (nullable)
-        public int? Grade { get; set; } // Grade given by teacher/owner
-        public string? Feedback { get; set; } // Feedback from teacher/owner
+        
+        public int? Grade { get; set; } 
+        public string? Feedback { get; set; } 
         public DateTime? GradedAt { get; set; }
-        public int? GradedById { get; set; } // FK to User (who graded it)
+        public int? GradedById { get; set; } 
 
         public int? LastEvaluationPointsObtained { get; set; }
         public int? LastEvaluationTotalPossiblePoints { get; set; }
@@ -32,7 +32,7 @@ namespace WebCodeWork.Models
 
         public string? LastEvaluatedLanguage { get; set; }
 
-        // Navigation Properties
+        
         [ForeignKey(nameof(AssignmentId))]
         public virtual Assignment Assignment { get; set; } = null!;
 
@@ -40,7 +40,7 @@ namespace WebCodeWork.Models
         public virtual User Student { get; set; } = null!;
 
         [ForeignKey(nameof(GradedById))]
-        public virtual User? GradedBy { get; set; } // Grader might not always be set
+        public virtual User? GradedBy { get; set; } 
 
         public virtual ICollection<SubmittedFile> SubmittedFiles { get; set; } = new List<SubmittedFile>();
     }

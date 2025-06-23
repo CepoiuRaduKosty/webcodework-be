@@ -1,9 +1,9 @@
-// Dtos/TestCaseDtos.cs
+
 using System.ComponentModel.DataAnnotations;
 
 namespace WebCodeWork.Dtos
 {
-    public class TestCaseListDto // For lists, used by GET /api/assignments/{assignmentId}/testcases
+    public class TestCaseListDto 
     {
         public int Id { get; set; }
         public string InputFileName { get; set; } = string.Empty;
@@ -16,7 +16,7 @@ namespace WebCodeWork.Dtos
         public bool IsPrivate { get; set; }
     }
 
-    // Used as response for POST /api/assignments/{assignmentId}/testcases
+    
     public class TestCaseDetailDto
     {
         public int Id { get; set; }

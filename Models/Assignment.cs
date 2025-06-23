@@ -9,22 +9,22 @@ namespace WebCodeWork.Models
         public int Id { get; set; }
 
         [Required]
-        public int ClassroomId { get; set; } // FK to Classroom
+        public int ClassroomId { get; set; } 
 
         [Required]
         [MaxLength(200)]
         public string Title { get; set; } = string.Empty;
 
-        public string? Instructions { get; set; } // Can be longer text, potentially HTML/Markdown later
+        public string? Instructions { get; set; } 
 
         [Required]
-        public int CreatedById { get; set; } // FK to User (Teacher/Owner who created it)
+        public int CreatedById { get; set; } 
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public DateTime? DueDate { get; set; } // Optional deadline
-        public int? MaxPoints { get; set; } // Optional max points/grade
+        public DateTime? DueDate { get; set; } 
+        public int? MaxPoints { get; set; } 
 
-        // Navigation Properties
+        
         [ForeignKey(nameof(ClassroomId))]
         public virtual Classroom Classroom { get; set; } = null!;
 
@@ -33,10 +33,10 @@ namespace WebCodeWork.Models
 
         public virtual ICollection<AssignmentSubmission> Submissions { get; set; } = new List<AssignmentSubmission>();
 
-        [Required] // Make IsCodeAssignment required
-        public bool IsCodeAssignment { get; set; } = false; // Default to false
+        [Required] 
+        public bool IsCodeAssignment { get; set; } = false; 
 
-        // Add navigation property for test cases
+        
         public virtual ICollection<TestCase> TestCases { get; set; } = new List<TestCase>();
     }
 }

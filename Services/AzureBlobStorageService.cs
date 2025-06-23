@@ -1,4 +1,4 @@
-// Services/AzureBlobStorageService.cs
+
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
@@ -13,27 +13,27 @@ namespace WebCodeWork.Services
 {
     public interface IFileStorageService
     {
-        // --- Submission File Methods ---
+        
         Task<(string StoredFileName, string RelativePath)> SaveSubmissionFileAsync(int submissionId, IFormFile file);
         Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName);
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName);
         Task<(string StoredFileName, string RelativePath)> CreateEmptyFileAsync(int submissionId, string desiredFileName);
         Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent);
 
-        // --- Test Case File Methods ---
+        
         Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file);
         Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName);
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetTestCaseFileAsync(string relativePath, string storedFileName, string originalFileName);
 
-        // --- Classroom Photo Methods ---
+        
         Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile);
         Task<bool> DeleteClassroomPhotoAsync(string relativePath, string storedFileName);
 
-        // --- User Profile Photo Methods ---
+        
         Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile);
         Task<bool> DeleteUserProfilePhotoAsync(string relativePath, string storedFileName);
 
-        // --- Misc ---
+        
         public string? GetPublicUserProfilePhotoUrl(string ProfilePhotoPath, string ProfilePhotoStoredName);
     }
 }
@@ -51,7 +51,7 @@ namespace WebCodeWork.Services
 
         private readonly string _publicStorageBaseUrl;
 
-        private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; // e.g., testcases/123/input
+        private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; 
 
         public AzureBlobStorageService(IConfiguration configuration, ILogger<AzureBlobStorageService> logger)
         {
@@ -82,7 +82,7 @@ namespace WebCodeWork.Services
             {
                 var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
                 var response = await containerClient.CreateIfNotExistsAsync(accessType);
-                if (response != null && response.GetRawResponse().Status == 201) // 201 means created
+                if (response != null && response.GetRawResponse().Status == 201) 
                 {
                     _logger.LogInformation("Blob container '{ContainerName}' created with access type '{AccessType}'.", containerName, accessType);
                 }
@@ -94,7 +94,7 @@ namespace WebCodeWork.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to ensure blob container '{ContainerName}' with access type '{AccessType}' exists.", containerName, accessType);
-                throw; // Critical for service operation
+                throw; 
             }
         }
 
@@ -103,7 +103,7 @@ namespace WebCodeWork.Services
             var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var extension = Path.GetExtension(file.FileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
-            var blobPath = $"submissions/{submissionId}/{uniqueBlobName}"; // Relative path within container
+            var blobPath = $"submissions/{submissionId}/{uniqueBlobName}"; 
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             _logger.LogInformation("Uploading file {FileName} to blob {BlobPath} for submission {SubmissionId}...", file.FileName, blobPath, submissionId);
@@ -124,17 +124,17 @@ namespace WebCodeWork.Services
             }
         }
 
-        public async Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName) // relativePath here is the directory structure, storedFileName is the unique blob name
+        public async Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName) 
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
-            var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/"); // Construct full blob path
+            var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/"); 
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             _logger.LogInformation("Attempting to delete blob {BlobPath}...", blobPath);
             try
             {
                 var response = await blobClient.DeleteIfExistsAsync();
-                if (response.Value) // Check if deletion actually happened
+                if (response.Value) 
                 {
                     _logger.LogInformation("Successfully deleted blob {BlobPath}", blobPath);
                     return true;
@@ -142,13 +142,13 @@ namespace WebCodeWork.Services
                 else
                 {
                     _logger.LogWarning("Blob {BlobPath} did not exist or already deleted.", blobPath);
-                    return false; // Indicate file didn't exist
+                    return false; 
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error deleting blob {BlobPath}", blobPath);
-                return false; // Indicate failure
+                return false; 
             }
         }
 
@@ -168,17 +168,17 @@ namespace WebCodeWork.Services
                     return (null, null, originalFileName);
                 }
 
-                // Get properties to fetch content type
+                
                 BlobProperties properties = await blobClient.GetPropertiesAsync();
-                // Get stream
-                var response = await blobClient.DownloadStreamingAsync(); // Use DownloadStreamingAsync for efficiency
+                
+                var response = await blobClient.DownloadStreamingAsync(); 
 
                 return (response.Value.Content, properties.ContentType, originalFileName);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error downloading blob {BlobPath}", blobPath);
-                return (null, null, originalFileName); // Indicate failure
+                return (null, null, originalFileName); 
             }
         }
 
@@ -187,30 +187,30 @@ namespace WebCodeWork.Services
             var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
             var extension = Path.GetExtension(desiredFileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
-            var relativePath = $"submissions/{submissionId}"; // Directory structure
-            var blobPath = $"{relativePath}/{uniqueBlobName}"; // Full path within container
+            var relativePath = $"submissions/{submissionId}"; 
+            var blobPath = $"{relativePath}/{uniqueBlobName}"; 
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             _logger.LogInformation("Creating empty blob {BlobPath} ({OriginalName}) for submission {SubmissionId}...", blobPath, desiredFileName, submissionId);
 
             try
             {
-                // Upload an empty stream
-                using (var stream = new MemoryStream()) // Empty stream
+                
+                using (var stream = new MemoryStream()) 
                 {
-                    // Attempt to determine content type based on desired name
+                    
                     var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
                     if (!provider.TryGetContentType(desiredFileName, out var contentType))
                     {
-                        contentType = "application/octet-stream"; // Default if unknown
+                        contentType = "application/octet-stream"; 
                     }
 
                     await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = contentType });
-                    // Optionally, you could set metadata here if needed
+                    
                 }
 
                 _logger.LogInformation("Successfully created empty blob {BlobPath} ({OriginalName})", blobPath, desiredFileName);
-                return (uniqueBlobName, relativePath); // Return unique name and its 'folder'
+                return (uniqueBlobName, relativePath); 
             }
             catch (Exception ex)
             {
@@ -219,7 +219,7 @@ namespace WebCodeWork.Services
             }
         }
 
-        // --- NEW Method Implementation ---
+        
         public async Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_privateContainerName);
@@ -230,22 +230,22 @@ namespace WebCodeWork.Services
 
             try
             {
-                // Check if blob exists before trying to overwrite (optional, UploadAsync with overwrite=true handles it)
-                // if (!await blobClient.ExistsAsync())
-                // {
-                //     _logger.LogWarning("Blob {BlobPath} not found for overwriting.", blobPath);
-                //     return false;
-                // }
+                
+                
+                
+                
+                
+                
 
-                // Convert string content to a stream (UTF8)
+                
                 byte[] byteArray = Encoding.UTF8.GetBytes(newContent);
                 using (var stream = new MemoryStream(byteArray))
                 {
-                    // Determine content type (e.g., based on filename extension)
+                    
                     var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
                     if (!provider.TryGetContentType(storedFileName, out var contentType))
                     {
-                        contentType = "text/plain"; // Default to text/plain for code? Or keep original? Let's default.
+                        contentType = "text/plain"; 
                     }
 
                     BlobUploadOptions uploadOptions = new BlobUploadOptions
@@ -254,17 +254,17 @@ namespace WebCodeWork.Services
                         Conditions = null
                     };
 
-                    // Upload the new content, overwriting the existing blob
+                    
                     await blobClient.UploadAsync(stream, uploadOptions);
                 }
 
                 _logger.LogInformation("Successfully overwrote blob {BlobPath}", blobPath);
                 return true;
             }
-            catch (Exception ex) // Catch RequestFailedException specifically if needed
+            catch (Exception ex) 
             {
                 _logger.LogError(ex, "Error overwriting blob {BlobPath}", blobPath);
-                return false; // Indicate failure
+                return false; 
             }
         }
 
@@ -300,15 +300,15 @@ namespace WebCodeWork.Services
             return GetSubmissionFileAsync(relativePath, storedFileName, originalFileName);
         }
 
-        // --- NEW Classroom Photo Methods (use _publicPhotosContainerName) ---
+        
         public async Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_publicClassroomPhotosContainerName);
-            // Define a path structure for classroom photos, e.g., by classroomId
-            var relativePath = $"classrooms/{classroomId}/photo"; // Path within the public photos container
+            
+            var relativePath = $"classrooms/{classroomId}/photo"; 
             var extension = Path.GetExtension(photoFile.FileName);
-            var uniqueBlobName = $"{Guid.NewGuid()}{extension}"; // Ensures unique name
-            var blobPath = $"{relativePath}/{uniqueBlobName}";   // Full path within the container
+            var uniqueBlobName = $"{Guid.NewGuid()}{extension}"; 
+            var blobPath = $"{relativePath}/{uniqueBlobName}";   
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             _logger.LogInformation("Uploading classroom photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
@@ -316,7 +316,7 @@ namespace WebCodeWork.Services
             {
                 using (var stream = photoFile.OpenReadStream())
                 {
-                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = photoFile.ContentType }); // Overwrite if same name
+                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = photoFile.ContentType }); 
                 }
                 _logger.LogInformation("Successfully uploaded classroom photo {FileName} to public blob {BlobPath}", photoFile.FileName, blobPath);
                 return (uniqueBlobName, relativePath);
@@ -349,12 +349,12 @@ namespace WebCodeWork.Services
         }
 
 
-        // --- User Profile Photo Methods ---
+        
         public async Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_publicProfilePhotosContainerName);
-            // Path structure: user_profile_photos/{userId}/{guid}.ext
-            var relativePath = $"users/{userId}/profile"; // Subfolder per user within the profile photos container
+            
+            var relativePath = $"users/{userId}/profile"; 
             var extension = Path.GetExtension(photoFile.FileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
             var blobPath = $"{relativePath}/{uniqueBlobName}";

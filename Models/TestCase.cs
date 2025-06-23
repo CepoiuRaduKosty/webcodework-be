@@ -1,4 +1,4 @@
-// Models/TestCase.cs
+
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -10,56 +10,56 @@ namespace WebCodeWork.Models
         public int Id { get; set; }
 
         [Required]
-        public int AssignmentId { get; set; } // FK to Assignment
+        public int AssignmentId { get; set; } 
 
-        // Input File Info
+        
         [Required]
         [MaxLength(255)]
-        public string InputFileName { get; set; } = string.Empty; // Original name
+        public string InputFileName { get; set; } = string.Empty; 
 
         [Required]
         [MaxLength(255)]
-        public string InputStoredFileName { get; set; } = string.Empty; // Stored name (GUID.ext)
+        public string InputStoredFileName { get; set; } = string.Empty; 
 
         [Required]
         [MaxLength(1024)]
-        public string InputFilePath { get; set; } = string.Empty; // Relative storage path
+        public string InputFilePath { get; set; } = string.Empty; 
 
-        // Expected Output File Info
+        
         [Required]
         [MaxLength(255)]
-        public string ExpectedOutputFileName { get; set; } = string.Empty; // Original name
+        public string ExpectedOutputFileName { get; set; } = string.Empty; 
 
         [Required]
         [MaxLength(255)]
-        public string ExpectedOutputStoredFileName { get; set; } = string.Empty; // Stored name (GUID.ext)
+        public string ExpectedOutputStoredFileName { get; set; } = string.Empty; 
 
         [Required]
         [MaxLength(1024)]
-        public string ExpectedOutputFilePath { get; set; } = string.Empty; // Relative storage path
+        public string ExpectedOutputFilePath { get; set; } = string.Empty; 
 
         [Required]
-        [Range(0, 1000)] // Example: Points between 0 and 1000. Adjust as needed.
+        [Range(0, 1000)] 
         public int Points { get; set; }
 
         [Required]
-        [Range(100, 99999999)] // Example: 100ms to 5 seconds
-        public int MaxExecutionTimeMs { get; set; } = 2000; // Default to 2 seconds
+        [Range(100, 99999999)] 
+        public int MaxExecutionTimeMs { get; set; } = 2000; 
 
         [Required]
-        [Range(32, 99999999)]  // Example: 32MB to 512MB
-        public int MaxRamMB { get; set; } = 128; // Default to 128 MB
+        [Range(32, 99999999)]  
+        public int MaxRamMB { get; set; } = 128; 
 
-        // Audit Info
+        
         public DateTime AddedAt { get; set; } = DateTime.UtcNow;
 
         [Required]
-        public int AddedById { get; set; } // FK to User (who added it)
+        public int AddedById { get; set; } 
 
         [Required]
         public bool IsPrivate { get; set; } = false;
 
-        // Navigation Properties
+        
         [ForeignKey(nameof(AssignmentId))]
         public virtual Assignment Assignment { get; set; } = null!;
 

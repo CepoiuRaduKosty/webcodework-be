@@ -1,16 +1,16 @@
-// Dtos/CodeRunnerDtos.cs (in your Main Backend project)
+
 using System.ComponentModel.DataAnnotations;
 
-namespace WebCodeWork.Dtos // Adjust namespace as needed
+namespace WebCodeWork.Dtos 
 {
-    // --- Request DTO to call CodeRunnerService ---
+    
     public class CodeRunnerTestCaseInfo
     {
         [Required]
         public string InputFilePath { get; set; } = string.Empty;
         [Required]
         public string ExpectedOutputFilePath { get; set; } = string.Empty;
-        public string? TestCaseId { get; set; } // Optional identifier
+        public string? TestCaseId { get; set; } 
         [Required]
         public int MaxExecutionTimeMs { get; set; }
         [Required]
@@ -29,13 +29,13 @@ namespace WebCodeWork.Dtos // Adjust namespace as needed
         public List<CodeRunnerTestCaseInfo> TestCases { get; set; } = new List<CodeRunnerTestCaseInfo>();
     }
 
-    // --- Response DTO from CodeRunnerService ---
+    
     public class CodeRunnerTestCaseResult
     {
         public string TestCaseInputPath { get; set; } = string.Empty;
         public string? TestCaseId { get; set; }
         [Required]
-        public string Status { get; set; } = "INTERNAL_ERROR"; // Default
+        public string Status { get; set; } = "INTERNAL_ERROR"; 
         public string? Stdout { get; set; }
         public string? Stderr { get; set; }
         public string? Message { get; set; }

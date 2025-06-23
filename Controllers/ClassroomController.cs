@@ -105,19 +105,16 @@ namespace WebCodeWork.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
-            // Add the creator as the Owner
             var ownerMembership = new ClassroomMember
             {
                 UserId = ownerUserId,
-                Classroom = classroom, // Link to the classroom object
+                Classroom = classroom, 
                 Role = ClassroomRole.Owner,
                 JoinedAt = DateTime.UtcNow
             };
 
-            // It's usually best to add the principal entity first if not using navigation property assignment
             _context.Classrooms.Add(classroom);
-            _context.ClassroomMembers.Add(ownerMembership); // Add membership explicitly
-
+            _context.ClassroomMembers.Add(ownerMembership); 
 
             try
             {

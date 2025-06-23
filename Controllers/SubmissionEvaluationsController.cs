@@ -226,7 +226,7 @@ namespace YourMainBackend.Controllers
                         httpClient.DefaultRequestHeaders.Clear();
                         httpClient.DefaultRequestHeaders.Add("X-Api-Key", runnerApiKey);
                         httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                        httpClient.Timeout = TimeSpan.FromMinutes(20);
+                        httpClient.Timeout = TimeSpan.FromMinutes(10);
 
                         try
                         {

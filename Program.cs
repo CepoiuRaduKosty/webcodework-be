@@ -14,8 +14,8 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), // Use Pomelo
-        mySqlOptions => mySqlOptions.EnableRetryOnFailure( // Optional: Configure retry logic
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), 
+        mySqlOptions => mySqlOptions.EnableRetryOnFailure( 
             maxRetryCount: 5,
             maxRetryDelay: TimeSpan.FromSeconds(30),
             errorNumbersToAdd: null)
@@ -37,7 +37,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddScoped<IPasswordService, PasswordService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
@@ -50,8 +50,8 @@ builder.Services.AddHttpClient("CodeRunnerClient", client =>
     {
         client.BaseAddress = new Uri(serviceBaseUrl);
     }
-    // Default headers can be set here, but API key is better set per-request
-    // client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+    
+    
 });
 
 var jwtSettings = builder.Configuration.GetSection("Jwt");
@@ -99,7 +99,7 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddSwaggerGen(options => // Optional: Configure Swagger for JWT
+builder.Services.AddSwaggerGen(options => 
 {
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
     {
@@ -130,11 +130,11 @@ var app = builder.Build();
 
 var webSocketOptions = new WebSocketOptions
 {
-    KeepAliveInterval = TimeSpan.FromMinutes(20) // Example keep-alive
+    KeepAliveInterval = TimeSpan.FromMinutes(20) 
 };
-app.UseWebSockets(webSocketOptions); // Call this early in the pipeline
+app.UseWebSockets(webSocketOptions); 
 
-// Configure the HTTP request pipeline.
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
