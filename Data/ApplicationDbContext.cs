@@ -21,8 +21,6 @@ namespace WebCodeWork.Data
 
         public DbSet<TestCase> TestCases { get; set; } 
 
-
-
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -31,38 +29,29 @@ namespace WebCodeWork.Data
                 .HasIndex(u => u.Username)
                 .IsUnique();
 
-            
-
-            
             modelBuilder.Entity<ClassroomMember>()
                 .HasKey(cm => new { cm.UserId, cm.ClassroomId });
 
-            
             modelBuilder.Entity<ClassroomMember>()
                 .HasOne(cm => cm.User)
                 .WithMany(u => u.ClassroomMemberships) 
                 .HasForeignKey(cm => cm.UserId)
                 .OnDelete(DeleteBehavior.Cascade); 
 
-            
             modelBuilder.Entity<ClassroomMember>()
                 .HasOne(cm => cm.Classroom)
                 .WithMany(c => c.Members) 
                 .HasForeignKey(cm => cm.ClassroomId)
                 .OnDelete(DeleteBehavior.Cascade); 
 
-            
             modelBuilder.Entity<ClassroomMember>()
                 .Property(cm => cm.Role)
                 .HasConversion<string>();
 
-
-            
             modelBuilder.Entity<AssignmentSubmission>()
                 .HasIndex(s => new { s.StudentId, s.AssignmentId })
                 .IsUnique();
 
-            
             modelBuilder.Entity<Assignment>()
                 .HasOne(a => a.Classroom)
                 .WithMany() 
@@ -98,8 +87,6 @@ namespace WebCodeWork.Data
                 .WithMany(s => s.SubmittedFiles)
                 .HasForeignKey(f => f.AssignmentSubmissionId)
                 .OnDelete(DeleteBehavior.Cascade); 
-
-            
 
             modelBuilder.Entity<TestCase>()
                 .HasOne(tc => tc.Assignment)

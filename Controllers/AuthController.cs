@@ -63,12 +63,11 @@ namespace YourProjectName.Controllers
             {
                 errors.Add("Password must contain at least one digit.");
             }
-            if (!Regex.IsMatch(password, @"[\W_]")) // \W is non-word character, _ is underscore
+            if (!Regex.IsMatch(password, @"[\W_]"))
             {
                 errors.Add("Password must contain at least one special character (e.g., !@#$%^&*).");
             }
-
-            // Prevent passwords too similar to username (basic check)
+           
             if (!string.IsNullOrWhiteSpace(username) && password.ToLower().Contains(username.ToLower()))
             {
                 errors.Add("Password should not contain your username.");
@@ -138,13 +137,13 @@ namespace YourProjectName.Controllers
                 await _context.SaveChangesAsync();
                 return CreatedAtAction(nameof(Register), new { id = user.Id }, new { message = "User registered successfully." });
             }
-            catch (DbUpdateException ex) // Catch specific EF Core exceptions
+            catch (DbUpdateException ex)
             {
                 _logger.LogError(ex, "Error saving user registration to database.");
-                // Check inner exception for details, e.g., duplicate key violation
+               
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An error occurred during registration. Please try again." });
             }
-            catch (Exception ex) // Catch broader exceptions
+            catch (Exception ex)
             {
                 _logger.LogError(ex, "An unexpected error occurred during registration.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "An unexpected error occurred." });
@@ -170,7 +169,6 @@ namespace YourProjectName.Controllers
                 return Unauthorized(new { message = "Invalid username or password." });
             }
 
-            // Generate JWT token
             var (tokenString, expiration) = _tokenService.GenerateToken(user);
 
             return Ok(new LoginResponseDto

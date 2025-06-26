@@ -1,4 +1,3 @@
-// Controllers/SubmissionEvaluationsController.cs (in your Main Backend project)
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,10 +16,10 @@ namespace YourMainBackend.Controllers
 {
     [Route("api/submission-evaluations")]
     [ApiController]
-    [Authorize] // Protect the controller (e.g., with JWT Bearer auth for your users)
+    [Authorize]
     public class SubmissionEvaluationsController : ControllerBase
     {
-        private readonly ApplicationDbContext _context; // Your main DbContext
+        private readonly ApplicationDbContext _context;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _configuration;
         private readonly ILogger<SubmissionEvaluationsController> _logger;
@@ -68,7 +67,7 @@ namespace YourMainBackend.Controllers
         {
             var userRoleInClassroom = await _context.ClassroomMembers
                 .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == classroomId)
-                .Select(cm => (ClassroomRole?)cm.Role) // Select nullable role
+                .Select(cm => (ClassroomRole?)cm.Role)
                 .FirstOrDefaultAsync();
 
             if (userRoleInClassroom == ClassroomRole.Owner || userRoleInClassroom == ClassroomRole.Teacher)
@@ -178,15 +177,12 @@ namespace YourMainBackend.Controllers
                     var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<SubmissionEvaluationsController>>();
 
                     scopedLogger.LogInformation("[Background] Starting actual evaluation for User {UserId}, Submission {SubmissionId}", currentUserIdString, submissionId);
-
-                    // Fetch a fresh copy of submission and assignment test cases within this scope
-                    // This ensures we have the most up-to-date data and it's tracked by scopedDbContext
+                   
                     var currentSubmission = await scopedDbContext.AssignmentSubmissions
                         .Include(s => s.Assignment)
                             .ThenInclude(a => a!.TestCases)
                         .FirstOrDefaultAsync(s => s.Id == submissionId);
-
-                    // If submission or assignment vanished or test cases removed between trigger and now.
+                   
                     if (currentSubmission == null || currentSubmission.Assignment == null || currentSubmission.Assignment.TestCases == null)
                     {
                         scopedLogger.LogError("[Background] Submission or critical related data not found for Submission {SubmissionId}", submissionId);
@@ -243,7 +239,7 @@ namespace YourMainBackend.Controllers
                                 orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = $"RunnerError: {runnerHttpResponse.StatusCode}", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
                             }
                         }
-                        catch (TaskCanceledException tex) when (tex.InnerException is TimeoutException) // HttpClient timeout
+                        catch (TaskCanceledException tex) when (tex.InnerException is TimeoutException)
                         {
                             scopedLogger.LogError(tex, "[Background] HttpClient request to CodeRunnerService timed out for User {UserId}, Submission {SubmissionId}.", currentUserIdString, submissionId);
                             orchestratorResponse = new CodeRunnerEvaluateResponse { OverallStatus = "RunnerTimeout", CompilationSuccess = false, Results = new List<CodeRunnerTestCaseResult>() };
@@ -262,18 +258,17 @@ namespace YourMainBackend.Controllers
 
                     int? pointsObtained = null;
                     int? totalPossiblePoints = null;
-                    string finalOverallStatus = EvaluationStatus.InternalError; // Default if orchestratorResponse is null
+                    string finalOverallStatus = EvaluationStatus.InternalError;
 
                     if (orchestratorResponse != null)
                     {
-                        finalOverallStatus = orchestratorResponse.OverallStatus; // Use orchestrator's overall status
+                        finalOverallStatus = orchestratorResponse.OverallStatus;
 
                         if (orchestratorResponse.CompilationSuccess && orchestratorResponse.Results != null)
                         {
                             pointsObtained = 0;
                             totalPossiblePoints = 0;
-
-                            // Create a dictionary of TestCaseId to Points for quick lookup
+                           
                             var testCasePointsMap = currentSubmission.Assignment.TestCases
                                 .ToDictionary(tc => tc.Id.ToString(), tc => tc.Points);
 
@@ -282,7 +277,7 @@ namespace YourMainBackend.Controllers
                                 if (tcResult.TestCaseId != null && testCasePointsMap.TryGetValue(tcResult.TestCaseId, out var pointsForThisCase))
                                 {
                                     totalPossiblePoints = (totalPossiblePoints ?? 0) + pointsForThisCase;
-                                    if (tcResult.Status == EvaluationStatus.Accepted) // Assuming EvaluationStatus is shared/mirrored
+                                    if (tcResult.Status == EvaluationStatus.Accepted)
                                     {
                                         pointsObtained = (pointsObtained ?? 0) + pointsForThisCase;
                                     }
@@ -372,14 +367,13 @@ namespace YourMainBackend.Controllers
                         currentUserIdString, submissionId, pointsObtained, totalPossiblePoints);
                     await _evaluationHubContext.Clients.User(currentUserIdString).SendAsync(
                         "ReceiveEvaluationResult",
-                        signalRPayload, // Send the augmented DTO
-                        submissionId,   // Keep submissionId for client-side check
-                        normalizedLanguage // Keep language for client-side check
+                        signalRPayload,
+                        submissionId,  
+                        normalizedLanguage
                     );
                 }
             });
-
-            // Return an immediate response to the client
+           
             _logger.LogInformation("Evaluation process for submission {SubmissionId} started in background for User {UserId}.", submissionId, currentUserId);
             return Accepted(new { message = "Evaluation process started. You will be notified when results are ready.", submissionId = submissionId });
         }

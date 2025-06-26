@@ -9,16 +9,16 @@ using System.IO;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
-using WebCodeWork.Data;      // Your DbContext
-using WebCodeWork.Models;    // Your User model
-using WebCodeWork.Services;  // Your IFileStorageService
-using WebCodeWork.Dtos;      // For UserProfileDto or similar response
+using WebCodeWork.Data;     
+using WebCodeWork.Models;   
+using WebCodeWork.Services; 
+using WebCodeWork.Dtos;     
 
 namespace WebCodeWork.Controllers
 {
-    [Route("api/user/profile/photo")] // Route for current user's photo
+    [Route("api/user/profile/photo")]
     [ApiController]
-    [Authorize] // All actions require an authenticated user
+    [Authorize]
     public class UserProfilePhotoController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
@@ -48,7 +48,7 @@ namespace WebCodeWork.Controllers
 
         [HttpPost]
         [Consumes("multipart/form-data")]
-        [ProducesResponseType(typeof(UserProfileDto), StatusCodes.Status200OK)] // Return updated user profile
+        [ProducesResponseType(typeof(UserProfileDto), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -61,26 +61,23 @@ namespace WebCodeWork.Controllers
             if (photoFile == null || photoFile.Length == 0)
                 return BadRequest(new ProblemDetails { Title = "File Error", Detail = "No photo file uploaded." });
 
-            // File validation (example)
             var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
             var extension = Path.GetExtension(photoFile.FileName).ToLowerInvariant();
             if (!allowedExtensions.Contains(extension))
                 return BadRequest(new ProblemDetails { Title = "Invalid File Type", Detail = "Allowed types: " + string.Join(", ", allowedExtensions) });
-            long maxFileSize = 2 * 1024 * 1024; // 2 MB
+            long maxFileSize = 2 * 1024 * 1024;
             if (photoFile.Length > maxFileSize)
                 return BadRequest(new ProblemDetails { Title = "File Too Large", Detail = $"File size exceeds limit of {maxFileSize / 1024 / 1024} MB." });
 
             var user = await _context.Users.FindAsync(currentUserId);
             if (user == null) return NotFound(new ProblemDetails { Title = "User Not Found" });
 
-            // If an old photo exists, delete it from storage
             if (!string.IsNullOrEmpty(user.ProfilePhotoPath) && !string.IsNullOrEmpty(user.ProfilePhotoStoredName))
             {
                 await _fileService.DeleteUserProfilePhotoAsync(user.ProfilePhotoPath, user.ProfilePhotoStoredName);
                 _logger.LogInformation("Old profile photo {OldPhoto} deleted for User {UserId}", user.ProfilePhotoStoredName, currentUserId);
             }
 
-            // Save the new photo
             var (storedFileName, relativePath) = await _fileService.SaveUserProfilePhotoAsync(currentUserId, photoFile);
 
             user.ProfilePhotoOriginalName = photoFile.FileName;
@@ -92,7 +89,7 @@ namespace WebCodeWork.Controllers
             await _context.SaveChangesAsync();
             _logger.LogInformation("New profile photo {NewPhoto} uploaded for User {UserId}", storedFileName, currentUserId);
 
-            var userProfileDto = new UserProfileDto // Assuming you have this DTO
+            var userProfileDto = new UserProfileDto
             {
                 Id = user.Id,
                 Username = user.Username,

@@ -13,27 +13,22 @@ namespace WebCodeWork.Services
 {
     public interface IFileStorageService
     {
-        
         Task<(string StoredFileName, string RelativePath)> SaveSubmissionFileAsync(int submissionId, IFormFile file);
         Task<bool> DeleteSubmissionFileAsync(string relativePath, string storedFileName);
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetSubmissionFileAsync(string relativePath, string storedFileName, string originalFileName);
         Task<(string StoredFileName, string RelativePath)> CreateEmptyFileAsync(int submissionId, string desiredFileName);
         Task<bool> OverwriteSubmissionFileAsync(string relativePath, string storedFileName, string newContent);
-
         
         Task<(string StoredFileName, string RelativePath)> SaveTestCaseFileAsync(int assignmentId, string fileTypeDir, IFormFile file);
         Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName);
         Task<(Stream? FileStream, string? ContentType, string DownloadName)> GetTestCaseFileAsync(string relativePath, string storedFileName, string originalFileName);
 
-        
         Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile);
         Task<bool> DeleteClassroomPhotoAsync(string relativePath, string storedFileName);
 
-        
         Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile);
         Task<bool> DeleteUserProfilePhotoAsync(string relativePath, string storedFileName);
 
-        
         public string? GetPublicUserProfilePhotoUrl(string ProfilePhotoPath, string ProfilePhotoStoredName);
     }
 }
@@ -48,9 +43,7 @@ namespace WebCodeWork.Services
         private readonly string _publicClassroomPhotosContainerName;
         private readonly string _publicProfilePhotosContainerName;
         private readonly ILogger<AzureBlobStorageService> _logger;
-
         private readonly string _publicStorageBaseUrl;
-
         private string GetTestCaseBlobDir(int assignmentId, string fileTypeDir) => $"testcases/{assignmentId}/{fileTypeDir}"; 
 
         public AzureBlobStorageService(IConfiguration configuration, ILogger<AzureBlobStorageService> logger)
@@ -168,7 +161,6 @@ namespace WebCodeWork.Services
                     return (null, null, originalFileName);
                 }
 
-                
                 BlobProperties properties = await blobClient.GetPropertiesAsync();
                 
                 var response = await blobClient.DownloadStreamingAsync(); 
@@ -195,18 +187,14 @@ namespace WebCodeWork.Services
 
             try
             {
-                
                 using (var stream = new MemoryStream()) 
                 {
-                    
                     var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
                     if (!provider.TryGetContentType(desiredFileName, out var contentType))
                     {
                         contentType = "application/octet-stream"; 
                     }
-
                     await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = contentType });
-                    
                 }
 
                 _logger.LogInformation("Successfully created empty blob {BlobPath} ({OriginalName})", blobPath, desiredFileName);
@@ -230,18 +218,9 @@ namespace WebCodeWork.Services
 
             try
             {
-                
-                
-                
-                
-                
-                
-
-                
                 byte[] byteArray = Encoding.UTF8.GetBytes(newContent);
                 using (var stream = new MemoryStream(byteArray))
                 {
-                    
                     var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
                     if (!provider.TryGetContentType(storedFileName, out var contentType))
                     {
@@ -253,8 +232,6 @@ namespace WebCodeWork.Services
                         HttpHeaders = new BlobHttpHeaders { ContentType = contentType },
                         Conditions = null
                     };
-
-                    
                     await blobClient.UploadAsync(stream, uploadOptions);
                 }
 
@@ -287,7 +264,7 @@ namespace WebCodeWork.Services
                 _logger.LogInformation("Successfully uploaded test case file {FileName} to blob {BlobPath}", file.FileName, blobPath);
                 return (uniqueBlobName, relativeDirPath);
             }
-            catch (Exception ex) { /* ... Log error, throw ... */ throw; }
+            catch (Exception ex) { throw; }
         }
 
         public Task<bool> DeleteTestCaseFileAsync(string relativePath, string storedFileName)
@@ -299,12 +276,10 @@ namespace WebCodeWork.Services
         {
             return GetSubmissionFileAsync(relativePath, storedFileName, originalFileName);
         }
-
         
         public async Task<(string StoredFileName, string RelativePath)> SaveClassroomPhotoAsync(int classroomId, IFormFile photoFile)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_publicClassroomPhotosContainerName);
-            
             var relativePath = $"classrooms/{classroomId}/photo"; 
             var extension = Path.GetExtension(photoFile.FileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}"; 
@@ -347,13 +322,10 @@ namespace WebCodeWork.Services
                 return false;
             }
         }
-
-
         
         public async Task<(string StoredFileName, string RelativePath)> SaveUserProfilePhotoAsync(int userId, IFormFile photoFile)
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(_publicProfilePhotosContainerName);
-            
             var relativePath = $"users/{userId}/profile"; 
             var extension = Path.GetExtension(photoFile.FileName);
             var uniqueBlobName = $"{Guid.NewGuid()}{extension}";
@@ -382,7 +354,6 @@ namespace WebCodeWork.Services
             var containerClient = _blobServiceClient.GetBlobContainerClient(_publicProfilePhotosContainerName);
             var blobPath = Path.Combine(relativePath, storedFileName).Replace("\\", "/");
             var blobClient = containerClient.GetBlobClient(blobPath);
-
             _logger.LogInformation("Attempting to delete public blob (user profile photo) {BlobPath}...", blobPath);
             try
             {

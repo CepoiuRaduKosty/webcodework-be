@@ -1,10 +1,9 @@
-// Controllers/TestCasesController.cs
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using WebCodeWork.Data;
-using WebCodeWork.Dtos; // If needed for responses
+using WebCodeWork.Dtos;
 using WebCodeWork.Enums;
 using WebCodeWork.Models;
 using WebCodeWork.Services;
@@ -13,7 +12,7 @@ using System.Text;
 
 namespace WebCodeWork.Controllers
 {
-    [Route("api/testcases")] // Base route for test case specific actions
+    [Route("api/testcases")]
     [ApiController]
     [Authorize]
     public class TestCasesController : ControllerBase
@@ -28,21 +27,19 @@ namespace WebCodeWork.Controllers
             _logger = logger;
             _fileService = fileService;
         }
-
-        // --- Helper Methods ---
+       
         private int GetCurrentUserId()
         {
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId)) { throw new UnauthorizedAccessException("User ID not found in token."); }
             return userId;
         }
-
-        // Helper method to fetch TestCase and verify access (as defined previously)
+       
         private async Task<(TestCase? testCase, IActionResult? errorResult)> GetTestCaseAndVerifyAccess(int testCaseId, int currentUserId, bool trackEntity = false)
         {
             var query = _context.TestCases
                 .Include(tc => tc.Assignment)
-                    .ThenInclude(a => a!.Classroom) // For classroom ID
+                    .ThenInclude(a => a!.Classroom)
                 .AsQueryable();
 
             if (!trackEntity)
@@ -56,7 +53,7 @@ namespace WebCodeWork.Controllers
             {
                 return (null, NotFound(new ProblemDetails { Title = "Not Found", Detail = "Test case not found." }));
             }
-            if (testCase.Assignment == null) // Should not happen with include
+            if (testCase.Assignment == null)
             {
                  _logger.LogError("Assignment data missing for test case {TestCaseId}", testCaseId);
                  return (null, StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Internal Error", Detail = "Associated assignment data is missing."}));
@@ -79,12 +76,8 @@ namespace WebCodeWork.Controllers
                 return (null, Forbid());
             }
 
-            return (testCase, null); // Success
+            return (testCase, null);
         }
-
-
-
-        // --- Content Endpoints ---
 
         [HttpGet("{testCaseId}/input/content")]
         [Produces("text/plain")]
@@ -102,10 +95,9 @@ namespace WebCodeWork.Controllers
 
             _logger.LogDebug("User {UserId} attempting to get input content for test case {TestCaseId}", currentUserId, testCaseId);
 
-            // Fetch TestCase including Assignment for ClassroomId and IsCodeAssignment & IsPrivate status
             var testCase = await _context.TestCases
-                .Include(tc => tc.Assignment) // Required for ClassroomId and IsCodeAssignment
-                .AsNoTracking() // Read-only for this operation
+                .Include(tc => tc.Assignment)
+                .AsNoTracking()
                 .FirstOrDefaultAsync(tc => tc.Id == testCaseId);
 
             if (testCase == null)
@@ -122,21 +114,19 @@ namespace WebCodeWork.Controllers
                 return BadRequest(new ProblemDetails { Title = "Invalid Assignment Type", Detail = "Test case content is only applicable to code assignments." });
             }
 
-            // Get user's role in the classroom of this assignment
             var userRole = await _context.ClassroomMembers
                 .Where(cm => cm.UserId == currentUserId && cm.ClassroomId == testCase.Assignment.ClassroomId)
                 .Select(cm => (ClassroomRole?)cm.Role)
                 .FirstOrDefaultAsync();
 
-            // Authorization check
             bool canAccessContent = false;
             if (userRole == ClassroomRole.Owner || userRole == ClassroomRole.Teacher)
             {
-                canAccessContent = true; // Owners and Teachers can access any test case content
+                canAccessContent = true;
             }
             else if (userRole == ClassroomRole.Student)
             {
-                if (!testCase.IsPrivate) // Students can only access public test cases
+                if (!testCase.IsPrivate)
                 {
                     canAccessContent = true;
                 }
@@ -148,13 +138,11 @@ namespace WebCodeWork.Controllers
 
             if (!canAccessContent)
             {
-                // This covers non-members (userRole would be null) or students trying to access private cases.
                  _logger.LogWarning("User {UserId} (Role: {UserRole}) access denied for content of test case {TestCaseId} (IsPrivate: {IsPrivate}).",
                     currentUserId, userRole?.ToString() ?? "Not a member", testCaseId, testCase.IsPrivate);
                 return Forbid();
             }
 
-            // Proceed to fetch file content
             var (fileStream, _, _) = await _fileService.GetTestCaseFileAsync(
                 testCase.InputFilePath,
                 testCase.InputStoredFileName,
@@ -185,7 +173,6 @@ namespace WebCodeWork.Controllers
             return Content(fileContent, "text/plain", Encoding.UTF8);
         }
 
-        // --- MODIFIED Endpoint: Get Test Case Output Content ---
         [HttpGet("{testCaseId}/output/content")]
         [Produces("text/plain")]
         [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
@@ -264,7 +251,6 @@ namespace WebCodeWork.Controllers
             return Content(fileContent, "text/plain", Encoding.UTF8);
         }
 
-        // PUT /api/testcases/{testCaseId}/input/content
         [HttpPut("{testCaseId}/input/content")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -275,7 +261,7 @@ namespace WebCodeWork.Controllers
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> UpdateTestCaseInputContent(int testCaseId)
         {
-            // Manually read the request body
+           
             string content;
             using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
             {
@@ -290,22 +276,14 @@ namespace WebCodeWork.Controllers
             var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
             if (errorResult != null) return errorResult;
 
-            // Overwrite file content
             bool success = false;
             try { success = await _fileService.OverwriteSubmissionFileAsync(testCase!.InputFilePath, testCase.InputStoredFileName, content); }
             catch (Exception ex) { _logger.LogError(ex, "File service failed during input overwrite for test case {TestCaseId}.", testCaseId); }
 
             if (!success) return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update input file content in storage." });
-
-            // Update DB? (e.g., file size, modified date if tracking) - Optional for now
-            // testCase.InputFileSize = Encoding.UTF8.GetByteCount(content);
-            // _context.Entry(testCase).State = EntityState.Modified;
-            // try { await _context.SaveChangesAsync(); } catch { /* Log, maybe return 500 */ }
-
             return NoContent();
         }
 
-        // PUT /api/testcases/{testCaseId}/output/content
         [HttpPut("{testCaseId}/output/content")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -315,7 +293,6 @@ namespace WebCodeWork.Controllers
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> UpdateTestCaseOutputContent(int testCaseId)
         {
-            // Manually read the request body
             string content;
             using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
             {
@@ -328,19 +305,15 @@ namespace WebCodeWork.Controllers
             var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId);
             if (errorResult != null) return errorResult;
 
-            // Overwrite file content
             bool success = false;
             try { success = await _fileService.OverwriteSubmissionFileAsync(testCase!.ExpectedOutputFilePath, testCase.ExpectedOutputStoredFileName, content); }
             catch (Exception ex) { _logger.LogError(ex, "File service failed during output overwrite for test case {TestCaseId}.", testCaseId); }
 
             if (!success) return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to update output file content in storage." });
-
-            // Update DB? (e.g., file size, modified date if tracking) - Optional for now
-
             return NoContent();
         }
 
-        [HttpPatch("{testCaseId}/privacy")] // Using PATCH for partial update
+        [HttpPatch("{testCaseId}/privacy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -349,7 +322,7 @@ namespace WebCodeWork.Controllers
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> UpdateTestCasePrivacy(int testCaseId, [FromBody] UpdateTestCasePrivacyDto dto)
         {
-            if (!ModelState.IsValid) // Validates [Required] on dto.IsPrivate
+            if (!ModelState.IsValid)
             {
                 return ValidationProblem(ModelState);
             }
@@ -361,29 +334,26 @@ namespace WebCodeWork.Controllers
             _logger.LogInformation("User {UserId} attempting to update privacy for test case {TestCaseId} to IsPrivate={IsPrivate}",
                 currentUserId, testCaseId, dto.IsPrivate);
 
-            // Fetch the test case for update (track it) and verify access
+           
             var (testCase, errorResult) = await GetTestCaseAndVerifyAccess(testCaseId, currentUserId, trackEntity: true);
             if (errorResult != null)
             {
                 return errorResult;
             }
-            // testCase is guaranteed not null here by GetTestCaseAndVerifyAccess logic
 
             if (testCase!.IsPrivate == dto.IsPrivate)
             {
                 _logger.LogInformation("Privacy for test case {TestCaseId} already set to {IsPrivate}. No change made.", testCaseId, dto.IsPrivate);
-                return NoContent(); // No change needed
+                return NoContent();
             }
 
             testCase.IsPrivate = dto.IsPrivate;
-            // _context.TestCases.Update(testCase); // or _context.Entry(testCase).State = EntityState.Modified; (EF Core tracks changes on fetched entities)
-
             try
             {
                 await _context.SaveChangesAsync();
                 _logger.LogInformation("Successfully updated privacy for test case {TestCaseId} to IsPrivate={IsPrivate} by User {UserId}",
                     testCaseId, dto.IsPrivate, currentUserId);
-                return NoContent(); // Success
+                return NoContent();
             }
             catch (DbUpdateConcurrencyException ex)
             {
