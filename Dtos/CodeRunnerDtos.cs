@@ -25,6 +25,9 @@ namespace WebCodeWork.Dtos
         [Required]
         public string CodeFilePath { get; set; } = string.Empty;
         [Required]
+        public required int SubmissionId { get; set; }
+
+        [Required]
         [MinLength(1)]
         public List<CodeRunnerTestCaseInfo> TestCases { get; set; } = new List<CodeRunnerTestCaseInfo>();
     }
@@ -50,6 +53,7 @@ namespace WebCodeWork.Dtos
         public string OverallStatus { get; set; } = "Error";
         public bool CompilationSuccess { get; set; }
         public string? CompilerOutput { get; set; }
+        public string Language { get; set; } = "none";
         public List<CodeRunnerTestCaseResult> Results { get; set; } = new List<CodeRunnerTestCaseResult>();
     }
 

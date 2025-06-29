@@ -42,7 +42,7 @@ namespace WebCodeWork.Services
                 new Claim(ClaimTypes.Name, user.Username)
             };
 
-            var expiration = DateTime.UtcNow.AddHours(5);
+            var expiration = DateTime.UtcNow.AddHours(_configuration.GetValue<int>("Jwt:ExpirationHours"));
 
             var token = new JwtSecurityToken(
                 issuer: issuer,

@@ -50,8 +50,6 @@ builder.Services.AddHttpClient("CodeRunnerClient", client =>
     {
         client.BaseAddress = new Uri(serviceBaseUrl);
     }
-    
-    
 });
 
 var jwtSettings = builder.Configuration.GetSection("Jwt");
@@ -79,9 +77,9 @@ builder.Services.AddAuthentication(options =>
         ValidIssuer = issuer,
         ValidAudience = audience,
         IssuerSigningKey = new SymmetricSecurityKey(key),
-        ClockSkew = TimeSpan.Zero 
+        ClockSkew = TimeSpan.Zero
     };
-    
+
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
@@ -97,6 +95,11 @@ builder.Services.AddAuthentication(options =>
             return Task.CompletedTask;
         }
     };
+})
+.AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>("ApiKey", options =>
+{
+    options.ApiKeyHeaderName = builder.Configuration.GetValue<string>("CodeRunnerService:ApiHeaderName")!;
+    options.ValidApiKey = builder.Configuration.GetValue<string>("CodeRunnerService:ApiKey")!;
 });
 
 builder.Services.AddSwaggerGen(options => 
@@ -125,6 +128,7 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 builder.Services.AddPwnedPasswordHttpClient();
+builder.Services.AddSingleton<EvaluationTrackerService>();
 
 var app = builder.Build();
 
