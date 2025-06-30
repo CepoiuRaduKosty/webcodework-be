@@ -64,6 +64,7 @@ public class SubmissionsController : ControllerBase
                 IsLate = false
             };
             _context.AssignmentSubmissions.Add(submission);
+            await _context.SaveChangesAsync();
         }
         return submission;
     }
